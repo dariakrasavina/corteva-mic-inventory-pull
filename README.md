@@ -2,6 +2,8 @@
 
 A reusable script to inventory assets across one or multiple Databricks workspaces. No external dependencies — runs with standard Python 3.
 
+Workspace communication is done via Python's built-in `urllib` library, making direct calls to the [Databricks REST API](https://docs.databricks.com/api/). No third-party packages such as `databricks-sdk` are required.
+
 ---
 
 ## What it collects
@@ -29,7 +31,7 @@ Output per asset type: one `.json` file + one `.csv` file, saved under `output/<
 ## Requirements
 
 - Python 3.9+
-- No external packages needed
+- No external packages needed — `urllib`, `csv`, and `json` are all part of the Python standard library
 
 ---
 
