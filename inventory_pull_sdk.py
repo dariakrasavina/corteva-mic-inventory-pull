@@ -15,12 +15,12 @@ Install SDK:  pip3 install databricks-sdk --index-url https://pypi-proxy.dev.dat
     Service principal: DATABRICKS_HOST + DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET
 
 ─── Single workspace ────────────────────────────────────────────────────────
-    python inventory_sdk.py --host https://adb-xxx.net --token dapi...
-    python inventory_sdk.py --profile my-profile
-    python inventory_sdk.py --profile my-profile --section jobs
+    python inventory_pull_sdk.py --host https://adb-xxx.net --token dapi...
+    python inventory_pull_sdk.py --profile my-profile
+    python inventory_pull_sdk.py --profile my-profile --section jobs
 
 ─── Multiple workspaces (reads workspaces.json) ─────────────────────────────
-    python inventory_sdk.py --config workspaces.json
+    python inventory_pull_sdk.py --config workspaces.json
 
 ─── Options ─────────────────────────────────────────────────────────────────
     --config FILE       Path to workspaces JSON config (runs all workspaces)
