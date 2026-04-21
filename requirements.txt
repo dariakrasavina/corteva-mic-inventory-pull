@@ -1,0 +1,13 @@
+# inventory.py (v1)
+# No dependencies — uses Python built-ins only (urllib, csv, json).
+# Runs on any machine with Python 3.9+ and no internet access required.
+
+# inventory_v2.py (v2)
+# Requires the Databricks Python SDK.
+#
+# Install via Databricks internal PyPI proxy:
+#   pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/simple
+#
+# Install via public PyPI (if accessible):
+#   pip3 install databricks-sdk
+databricks-sdk>=0.20.0

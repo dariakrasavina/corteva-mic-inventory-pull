@@ -1,8 +1,15 @@
 # Corteva MIC — Databricks Workspace Inventory
 
-A reusable script to inventory assets across one or multiple Databricks workspaces. No external dependencies — runs with standard Python 3.
+A reusable tool to inventory assets across one or multiple Databricks workspaces.
 
-Workspace communication is done via Python's built-in `urllib` library, making direct calls to the [Databricks REST API](https://docs.databricks.com/api/). No third-party packages such as `databricks-sdk` are required.
+There are two versions of the inventory script — choose based on your environment:
+
+| | `inventory.py` (v1) | `inventory_v2.py` (v2) |
+|---|---|---|
+| **Approach** | Direct REST API calls via Python built-in `urllib` | Databricks Python SDK (`databricks-sdk`) |
+| **Dependencies** | None — Python standard library only | `pip install databricks-sdk` |
+| **Auth** | PAT token only | PAT token, `~/.databrickscfg` profiles, env vars, OAuth |
+| **Best for** | Environments where pip install is unavailable | Environments where the SDK can be installed |
 
 ---
 
@@ -30,8 +37,25 @@ Output per asset type: one `.json` file + one `.csv` file, saved under `output/<
 
 ## Requirements
 
+### v1 — `inventory.py`
+
 - Python 3.9+
-- No external packages needed — `urllib`, `csv`, and `json` are all part of the Python standard library
+- No external packages — `urllib`, `csv`, and `json` are all part of the Python standard library
+
+### v2 — `inventory_v2.py`
+
+- Python 3.9+
+- `databricks-sdk >= 0.20.0`
+
+Install via Databricks internal PyPI proxy:
+```bash
+pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/simple
+```
+
+Install via public PyPI (if accessible):
+```bash
+pip3 install databricks-sdk
+```
 
 ---
 
@@ -46,8 +70,20 @@ cd corteva-mic-inventory-pull-reusable
 
 ### 2. Configure your workspaces
 
-Open `workspaces.json` and fill in your PAT token for each workspace you want to inventory. Leave the token blank to skip a workspace.
+Copy `workspaces.template.json` to `workspaces.json` and fill in credentials for each workspace.
 
+**v1 — PAT token only:**
+```json
+[
+  {
+    "name": "sales-mi-dbw-01-dev",
+    "host": "https://adb-4225902524755119.19.azuredatabricks.net",
+    "token": "dapi..."
+  }
+]
+```
+
+**v2 — supports PAT token or `~/.databrickscfg` profile:**
 ```json
 [
   {
@@ -56,9 +92,9 @@ Open `workspaces.json` and fill in your PAT token for each workspace you want to
     "token": "dapi..."
   },
   {
-    "name": "sales-mi-dbw-01-prod",
-    "host": "https://adb-2281982956507820.0.azuredatabricks.net",
-    "token": ""
+    "name": "sales-mi-dbw-01-uat",
+    "host": "https://adb-8347049335921990.10.azuredatabricks.net",
+    "profile": "my-uat-profile"
   }
 ]
 ```
@@ -76,36 +112,45 @@ Open `workspaces.json` and fill in your PAT token for each workspace you want to
 
 ## Usage
 
-### Run across all configured workspaces
+### v1 — `inventory.py` (no dependencies)
 
 ```bash
+# All workspaces from config
 python3 inventory.py --config workspaces.json
-```
 
-### Run for a single workspace
+# Single workspace
+python3 inventory.py --host https://adb-xxx.azuredatabricks.net --token dapi...
 
-```bash
-python3 inventory.py \
-  --host https://adb-xxx.azuredatabricks.net \
-  --token dapi...
-```
-
-### Collect one asset type only
-
-```bash
+# One asset type only
 python3 inventory.py --config workspaces.json --section tables
-```
 
-### Save output to a custom directory
+# Save to a custom directory
+python3 inventory.py --config workspaces.json --output-dir /path/to/output
 
-```bash
-python3 inventory.py --config workspaces.json --output-dir /path/to/my/output
-```
-
-### Print JSON to stdout (single workspace)
-
-```bash
+# Print JSON to stdout
 python3 inventory.py --host https://... --token dapi... --json > out.json
+```
+
+### v2 — `inventory_v2.py` (requires databricks-sdk)
+
+```bash
+# All workspaces from config
+python3 inventory_v2.py --config workspaces.json
+
+# Single workspace — PAT token
+python3 inventory_v2.py --host https://adb-xxx.azuredatabricks.net --token dapi...
+
+# Single workspace — ~/.databrickscfg profile
+python3 inventory_v2.py --profile my-profile
+
+# One asset type only
+python3 inventory_v2.py --profile my-profile --section jobs
+
+# Save to a custom directory
+python3 inventory_v2.py --config workspaces.json --output-dir /path/to/output
+
+# Print JSON to stdout
+python3 inventory_v2.py --profile my-profile --json > out.json
 ```
 
 ---
