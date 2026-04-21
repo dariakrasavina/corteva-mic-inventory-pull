@@ -215,11 +215,58 @@ Pass any of these to `--section` to collect only that asset type:
 
 ---
 
+## Service Principals (production use)
+
+Service principals are the recommended way to run this script in production or automated pipelines — they don't expire like PAT tokens and can be managed centrally.
+
+**v1 (`inventory.py`)** has limited service principal support — it only accepts PAT tokens, and many production workspaces have PAT tokens disabled. If that is the case, use v2 instead.
+
+**v2 (`inventory_v2.py`)** fully supports service principals via OAuth M2M (machine-to-machine), which is the recommended approach for production.
+
+### Option A — environment variables
+
+```bash
+DATABRICKS_HOST=https://adb-xxx.azuredatabricks.net \
+DATABRICKS_CLIENT_ID=<sp-client-id> \
+DATABRICKS_CLIENT_SECRET=<sp-secret> \
+python3 inventory_v2.py
+```
+
+### Option B — `~/.databrickscfg` profile
+
+Add a named profile for the service principal:
+
+```ini
+[prod-sp]
+host          = https://adb-xxx.azuredatabricks.net
+client_id     = <sp-client-id>
+client_secret = <sp-secret>
+```
+
+Then run:
+
+```bash
+python3 inventory_v2.py --profile prod-sp
+```
+
+### Permissions required
+
+The service principal needs the following access on the target workspace:
+
+| Resource | Required permission |
+|---|---|
+| Jobs, pipelines, notebooks, repos, apps | Workspace read access (CAN VIEW) |
+| Tables, volumes, functions, models | `USE CATALOG` + `USE SCHEMA` on each catalog/schema |
+| Serving endpoints, experiments, dashboards | Workspace read access |
+| Full inventory | Workspace admin or broad read-only service principal |
+
+---
+
 ## Permissions
 
-The script collects whatever the provided token has access to. Results may be partial for tokens with limited permissions — the script will flag any permission-denied endpoints in the run summary rather than failing silently.
+The script collects whatever the provided credentials have access to. Results may be partial for tokens or service principals with limited permissions — the script will flag any permission-denied endpoints in the run summary rather than failing silently.
 
-For a complete inventory, the token should belong to a **workspace admin** or a service principal with broad read access.
+For a complete inventory, the credentials should belong to a **workspace admin** or a service principal with broad read access.
 
 ---
 
