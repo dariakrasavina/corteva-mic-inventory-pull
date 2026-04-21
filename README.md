@@ -2,14 +2,19 @@
 
 A reusable tool to inventory assets across one or multiple Databricks workspaces.
 
-There are two versions of the inventory script — choose based on your environment:
+There are two scripts — choose based on the environment you are running against:
 
 | | `inventory_pull_urllib.py` | `inventory_pull_sdk.py` |
 |---|---|---|
 | **Approach** | Direct REST API calls via Python built-in `urllib` | Databricks Python SDK (`databricks-sdk`) |
 | **Dependencies** | None — Python standard library only | `pip install databricks-sdk` |
 | **Auth** | PAT token only | PAT token, `~/.databrickscfg` profiles, env vars, OAuth M2M |
-| **Best for** | Environments where pip install is unavailable | Production, automation, service principals |
+| **Recommended for** | Dev and UAT — PAT tokens are available in lower environments | Production — service principals with OAuth M2M are required |
+
+**Why the distinction?**
+In **Dev and UAT** workspaces, users can typically generate PAT tokens directly in the workspace settings. `inventory_pull_urllib.py` requires no installation and works immediately with a PAT token.
+
+In **Production** workspaces, PAT tokens are often disabled for security reasons. Access must go through a service principal using OAuth M2M (machine-to-machine) authentication. `inventory_pull_sdk.py` handles this natively via the Databricks SDK — no manual token management needed.
 
 ---
 
@@ -67,13 +72,13 @@ Both scripts need credentials to connect to each Databricks workspace. The metho
 
 | Method | Supported by | How it works |
 |---|---|---|
-| **PAT token** | v1 and v2 | A `dapi...` token generated in your Databricks workspace settings |
-| **`~/.databrickscfg` profile** | v2 only | A named profile set up by the Databricks CLI (`databricks configure`) |
-| **Environment variables** | v2 only | `DATABRICKS_HOST` + `DATABRICKS_TOKEN` set in your shell |
-| **OAuth / Azure AD** | v2 only | Handled automatically by the SDK if configured |
+| **PAT token** | Both scripts | A `dapi...` token generated in your Databricks workspace settings |
+| **`~/.databrickscfg` profile** | `inventory_pull_sdk.py` only | A named profile set up by the Databricks CLI (`databricks configure`) |
+| **Environment variables** | `inventory_pull_sdk.py` only | `DATABRICKS_HOST` + `DATABRICKS_TOKEN` set in your shell |
+| **OAuth / Azure AD** | `inventory_pull_sdk.py` only | Handled automatically by the SDK if configured |
 
-> If you are using **v1**, PAT token is your only option.
-> If you are using **v2**, any of the above methods work.
+> If you are using **`inventory_pull_urllib.py`**, PAT token is your only option.
+> If you are using **`inventory_pull_sdk.py`**, any of the above methods work.
 
 ### How to generate a PAT token
 
@@ -87,7 +92,7 @@ If your workspace allows PAT tokens (not all do — check with your workspace ad
 
 > ⚠️ Never commit your token to Git. `workspaces.json` is gitignored for this reason.
 
-### How to set up a `~/.databrickscfg` profile (v2 only)
+### How to set up a `~/.databrickscfg` profile (`inventory_pull_sdk.py` only)
 
 If your workspace does not allow PAT tokens, use the Databricks CLI to configure a profile:
 
@@ -112,7 +117,7 @@ cd corteva-mic-inventory-pull-reusable
 
 Copy `workspaces.template.json` to `workspaces.json` and fill in credentials for each workspace.
 
-**v1 — PAT token only:**
+**`inventory_pull_urllib.py` — PAT token only:**
 ```json
 [
   {
@@ -123,7 +128,7 @@ Copy `workspaces.template.json` to `workspaces.json` and fill in credentials for
 ]
 ```
 
-**v2 — supports PAT token or `~/.databrickscfg` profile:**
+**`inventory_pull_sdk.py` — supports PAT token or `~/.databrickscfg` profile:**
 ```json
 [
   {
@@ -217,11 +222,11 @@ Pass any of these to `--section` to collect only that asset type:
 
 ## Service Principals (production use)
 
-Service principals are the recommended way to run this script in production or automated pipelines — they don't expire like PAT tokens and can be managed centrally.
+Service principals are the recommended way to run this script in production — they don't expire like PAT tokens, can be managed centrally, and work in workspaces where PAT tokens are disabled.
 
-**v1 (`inventory_pull_urllib.py`)** has limited service principal support — it only accepts PAT tokens, and many production workspaces have PAT tokens disabled. If that is the case, use v2 instead.
+**`inventory_pull_urllib.py`** does not support service principals — it only accepts PAT tokens. Use this script for Dev and UAT environments where PAT tokens are available.
 
-**v2 (`inventory_pull_sdk.py`)** fully supports service principals via OAuth M2M (machine-to-machine), which is the recommended approach for production.
+**`inventory_pull_sdk.py`** fully supports service principals via OAuth M2M (machine-to-machine). Use this script for production environments where PAT tokens are disabled and access must go through a service principal.
 
 ### Option A — environment variables
 
