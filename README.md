@@ -1,4 +1,4 @@
-# Corteva MIC — Databricks Workspace Inventory
+# Corteva MIC — Databricks Workspace and UC Inventory
 
 A reusable tool to inventory assets across one or multiple Databricks workspaces.
 
