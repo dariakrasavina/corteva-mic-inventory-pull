@@ -59,6 +59,46 @@ pip3 install databricks-sdk
 
 ---
 
+## Authentication
+
+Both scripts need credentials to connect to each Databricks workspace. The method you use depends on which script you are running and what your workspace allows.
+
+### Available authentication methods
+
+| Method | Supported by | How it works |
+|---|---|---|
+| **PAT token** | v1 and v2 | A `dapi...` token generated in your Databricks workspace settings |
+| **`~/.databrickscfg` profile** | v2 only | A named profile set up by the Databricks CLI (`databricks configure`) |
+| **Environment variables** | v2 only | `DATABRICKS_HOST` + `DATABRICKS_TOKEN` set in your shell |
+| **OAuth / Azure AD** | v2 only | Handled automatically by the SDK if configured |
+
+> If you are using **v1**, PAT token is your only option.
+> If you are using **v2**, any of the above methods work.
+
+### How to generate a PAT token
+
+If your workspace allows PAT tokens (not all do — check with your workspace admin):
+
+1. Log into your Databricks workspace
+2. Click your profile icon (top right) → **Settings**
+3. Left sidebar → **Developer** → **Access tokens**
+4. Click **Generate new token**, give it a name and expiry
+5. Copy the `dapi...` token — it is only shown once
+
+> ⚠️ Never commit your token to Git. `workspaces.json` is gitignored for this reason.
+
+### How to set up a `~/.databrickscfg` profile (v2 only)
+
+If your workspace does not allow PAT tokens, use the Databricks CLI to configure a profile:
+
+```bash
+databricks configure --profile my-profile
+```
+
+You will be prompted for the workspace host and your credentials. Once set up, pass `--profile my-profile` to `inventory_v2.py`.
+
+---
+
 ## Setup
 
 ### 1. Clone or download this folder
@@ -98,13 +138,6 @@ Copy `workspaces.template.json` to `workspaces.json` and fill in credentials for
   }
 ]
 ```
-
-**How to generate a PAT token:**
-1. Log into your Databricks workspace
-2. Click your profile icon (top right) → **Settings**
-3. Left sidebar → **Developer** → **Access tokens**
-4. Click **Generate new token**, give it a name and expiry
-5. Copy the `dapi...` token and paste it into `workspaces.json`
 
 > ⚠️ `workspaces.json` is gitignored — your tokens will never be committed to Git.
 
