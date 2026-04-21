@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
 """
-Corteva MIC — Workspace Inventory  (v2 — Databricks Python SDK)
-================================================================
+Corteva MIC — Workspace Inventory  (SDK version)
+=================================================
 Uses the official Databricks Python SDK for authentication and API calls.
+Supports PAT tokens, ~/.databrickscfg profiles, OAuth M2M (service principals),
+and environment variables. Recommended for production and automated runs.
 
-Install:  pip install databricks-sdk
-          (Databricks employees: pip install databricks-sdk --index-url <internal-mirror>)
+Install SDK:  pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/simple
 
 ─── Authentication options ──────────────────────────────────────────────────
-    PAT token:    --host URL --token dapi...
-    CLI profile:  --profile my-profile   (reads ~/.databrickscfg)
-    Env vars:     DATABRICKS_HOST + DATABRICKS_TOKEN (SDK picks up automatically)
-    Default:      SDK auto-discovers from env / [DEFAULT] profile in ~/.databrickscfg
+    PAT token:         --host URL --token dapi...
+    CLI profile:       --profile my-profile   (reads ~/.databrickscfg)
+    Env vars:          DATABRICKS_HOST + DATABRICKS_TOKEN
+    Service principal: DATABRICKS_HOST + DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET
 
 ─── Single workspace ────────────────────────────────────────────────────────
-    python inventory_v2.py --host https://adb-xxx.net --token dapi...
-    python inventory_v2.py --profile my-profile
-    python inventory_v2.py --profile my-profile --section jobs
+    python inventory_sdk.py --host https://adb-xxx.net --token dapi...
+    python inventory_sdk.py --profile my-profile
+    python inventory_sdk.py --profile my-profile --section jobs
 
 ─── Multiple workspaces (reads workspaces.json) ─────────────────────────────
-    python inventory_v2.py --config workspaces.json
+    python inventory_sdk.py --config workspaces.json
 
 ─── Options ─────────────────────────────────────────────────────────────────
     --config FILE       Path to workspaces JSON config (runs all workspaces)

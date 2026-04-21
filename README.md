@@ -4,12 +4,12 @@ A reusable tool to inventory assets across one or multiple Databricks workspaces
 
 There are two versions of the inventory script — choose based on your environment:
 
-| | `inventory.py` (v1) | `inventory_v2.py` (v2) |
+| | `inventory_urllib.py` | `inventory_sdk.py` |
 |---|---|---|
 | **Approach** | Direct REST API calls via Python built-in `urllib` | Databricks Python SDK (`databricks-sdk`) |
 | **Dependencies** | None — Python standard library only | `pip install databricks-sdk` |
-| **Auth** | PAT token only | PAT token, `~/.databrickscfg` profiles, env vars, OAuth |
-| **Best for** | Environments where pip install is unavailable | Environments where the SDK can be installed |
+| **Auth** | PAT token only | PAT token, `~/.databrickscfg` profiles, env vars, OAuth M2M |
+| **Best for** | Environments where pip install is unavailable | Production, automation, service principals |
 
 ---
 
@@ -37,12 +37,12 @@ Output per asset type: one `.json` file + one `.csv` file, saved under `output/<
 
 ## Requirements
 
-### v1 — `inventory.py`
+### `inventory_urllib.py`
 
 - Python 3.9+
 - No external packages — `urllib`, `csv`, and `json` are all part of the Python standard library
 
-### v2 — `inventory_v2.py`
+### `inventory_sdk.py`
 
 - Python 3.9+
 - `databricks-sdk >= 0.20.0`
@@ -95,7 +95,7 @@ If your workspace does not allow PAT tokens, use the Databricks CLI to configure
 databricks configure --profile my-profile
 ```
 
-You will be prompted for the workspace host and your credentials. Once set up, pass `--profile my-profile` to `inventory_v2.py`.
+You will be prompted for the workspace host and your credentials. Once set up, pass `--profile my-profile` to `inventory_sdk.py`.
 
 ---
 
@@ -145,45 +145,45 @@ Copy `workspaces.template.json` to `workspaces.json` and fill in credentials for
 
 ## Usage
 
-### v1 — `inventory.py` (no dependencies)
+### `inventory_urllib.py` (no dependencies)
 
 ```bash
 # All workspaces from config
-python3 inventory.py --config workspaces.json
+python3 inventory_urllib.py --config workspaces.json
 
 # Single workspace
-python3 inventory.py --host https://adb-xxx.azuredatabricks.net --token dapi...
+python3 inventory_urllib.py --host https://adb-xxx.azuredatabricks.net --token dapi...
 
 # One asset type only
-python3 inventory.py --config workspaces.json --section tables
+python3 inventory_urllib.py --config workspaces.json --section tables
 
 # Save to a custom directory
-python3 inventory.py --config workspaces.json --output-dir /path/to/output
+python3 inventory_urllib.py --config workspaces.json --output-dir /path/to/output
 
 # Print JSON to stdout
-python3 inventory.py --host https://... --token dapi... --json > out.json
+python3 inventory_urllib.py --host https://... --token dapi... --json > out.json
 ```
 
-### v2 — `inventory_v2.py` (requires databricks-sdk)
+### `inventory_sdk.py` (requires databricks-sdk)
 
 ```bash
 # All workspaces from config
-python3 inventory_v2.py --config workspaces.json
+python3 inventory_sdk.py --config workspaces.json
 
 # Single workspace — PAT token
-python3 inventory_v2.py --host https://adb-xxx.azuredatabricks.net --token dapi...
+python3 inventory_sdk.py --host https://adb-xxx.azuredatabricks.net --token dapi...
 
 # Single workspace — ~/.databrickscfg profile
-python3 inventory_v2.py --profile my-profile
+python3 inventory_sdk.py --profile my-profile
 
 # One asset type only
-python3 inventory_v2.py --profile my-profile --section jobs
+python3 inventory_sdk.py --profile my-profile --section jobs
 
 # Save to a custom directory
-python3 inventory_v2.py --config workspaces.json --output-dir /path/to/output
+python3 inventory_sdk.py --config workspaces.json --output-dir /path/to/output
 
 # Print JSON to stdout
-python3 inventory_v2.py --profile my-profile --json > out.json
+python3 inventory_sdk.py --profile my-profile --json > out.json
 ```
 
 ---
@@ -219,9 +219,9 @@ Pass any of these to `--section` to collect only that asset type:
 
 Service principals are the recommended way to run this script in production or automated pipelines — they don't expire like PAT tokens and can be managed centrally.
 
-**v1 (`inventory.py`)** has limited service principal support — it only accepts PAT tokens, and many production workspaces have PAT tokens disabled. If that is the case, use v2 instead.
+**v1 (`inventory_urllib.py`)** has limited service principal support — it only accepts PAT tokens, and many production workspaces have PAT tokens disabled. If that is the case, use v2 instead.
 
-**v2 (`inventory_v2.py`)** fully supports service principals via OAuth M2M (machine-to-machine), which is the recommended approach for production.
+**v2 (`inventory_sdk.py`)** fully supports service principals via OAuth M2M (machine-to-machine), which is the recommended approach for production.
 
 ### Option A — environment variables
 
@@ -229,7 +229,7 @@ Service principals are the recommended way to run this script in production or a
 DATABRICKS_HOST=https://adb-xxx.azuredatabricks.net \
 DATABRICKS_CLIENT_ID=<sp-client-id> \
 DATABRICKS_CLIENT_SECRET=<sp-secret> \
-python3 inventory_v2.py
+python3 inventory_sdk.py
 ```
 
 ### Option B — `~/.databrickscfg` profile
@@ -246,7 +246,7 @@ client_secret = <sp-secret>
 Then run:
 
 ```bash
-python3 inventory_v2.py --profile prod-sp
+python3 inventory_sdk.py --profile prod-sp
 ```
 
 ### Permissions required

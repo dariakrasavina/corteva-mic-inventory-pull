@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
-Corteva MIC — Workspace Inventory
-====================================
+Corteva MIC — Workspace Inventory  (urllib version)
+====================================================
 No external dependencies — uses only Python built-ins (urllib, csv, json).
+Does not require pip install. Works on any machine with Python 3.9+.
+
+Authentication: PAT token only (--token dapi...).
 
 Collects: jobs, pipelines, notebooks, tables, volumes, functions,
           genie spaces, ml experiments, dashboards, serving endpoints,
           apps, repos, registered ml models.
 
 ─── Single workspace ────────────────────────────────────────────────────────
-    python inventory.py --host https://adb-xxx.azuredatabricks.net --token dapiXXX
-    python inventory.py --host ... --token ... --save
-    python inventory.py --host ... --token ... --section jobs
-    python inventory.py --host ... --token ... --json > out.json
+    python inventory_urllib.py --host https://adb-xxx.azuredatabricks.net --token dapiXXX
+    python inventory_urllib.py --host ... --token ... --save
+    python inventory_urllib.py --host ... --token ... --section jobs
+    python inventory_urllib.py --host ... --token ... --json > out.json
 
 ─── Multiple workspaces (reads workspaces.json) ─────────────────────────────
-    python inventory.py --config workspaces.json
-    python inventory.py --config workspaces.json --section tables
+    python inventory_urllib.py --config workspaces.json
+    python inventory_urllib.py --config workspaces.json --section tables
 
 ─── Options ─────────────────────────────────────────────────────────────────
     --config FILE       Path to workspaces JSON config (runs all workspaces)
