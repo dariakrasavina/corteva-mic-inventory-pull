@@ -39,25 +39,28 @@ pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/si
 
 ### Step 3 — Authenticate to your workspace
 
-Run this once per workspace. Replace the `--host` URL with the workspace you want to inventory and give it any profile name you like:
+Run this once per workspace you want to inventory. Replace `<workspace-host>` with your workspace URL and `<profile-name>` with any name you choose (e.g. `dev`, `uat`, `prod`):
 
 ```bash
-databricks auth login --host https://adb-7405604679876710.10.azuredatabricks.net --profile mic-uat
+databricks auth login --host <workspace-host> --profile <profile-name>
 ```
 
 A browser window will open — log in with your Databricks account. The token is saved automatically to `~/.databrickscfg`.
 
-Repeat this step for each workspace you want to inventory, using a different `--profile` name each time:
+Repeat for each workspace, using a different profile name each time:
 
 ```bash
-databricks auth login --host https://adb-7405607360771421.1.azuredatabricks.net --profile mic-dev
-databricks auth login --host https://adb-7405607553229575.15.azuredatabricks.net --profile mic-prod
+databricks auth login --host <workspace-host-1> --profile <profile-name-1>
+databricks auth login --host <workspace-host-2> --profile <profile-name-2>
+databricks auth login --host <workspace-host-3> --profile <profile-name-3>
 ```
+
+> Workspace host URLs can be found in the [Workspaces](#workspaces) table at the bottom of this README.
 
 ### Step 4 — Run the inventory
 
 ```bash
-python3 inventory_pull_sdk.py --profile mic-uat --save
+python3 inventory_pull_sdk.py --profile <profile-name> --save
 ```
 
 Output is saved to `~/corteva-mic-workspace-assets/output/<profile-name>/` — one JSON and one CSV file per asset type.
