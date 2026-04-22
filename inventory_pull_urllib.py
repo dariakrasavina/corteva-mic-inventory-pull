@@ -26,7 +26,7 @@ Collects: jobs, pipelines, notebooks, tables, volumes, functions,
     --host URL          Single workspace host URL
     --token TOKEN       Single workspace PAT token
     --save              Write JSON + CSV files to disk (always on with --config)
-    --output-dir DIR    Root output directory (default: ./output)
+    --output-dir DIR    Root output directory (default: ~/corteva-mic-workspace-assets/output)
     --section KEY       Collect one section only
     --json              Print JSON to stdout (single workspace only)
 
@@ -611,7 +611,7 @@ def main() -> None:
     parser.add_argument("--host",       default=os.environ.get("DATABRICKS_HOST", ""), help="Single workspace host URL")
     parser.add_argument("--token",      default=os.environ.get("DATABRICKS_TOKEN", ""), help="Single workspace PAT token")
     parser.add_argument("--save",       action="store_true", help="Write JSON + CSV files to disk")
-    parser.add_argument("--output-dir", default="output",   help="Root output directory (default: ./output)")
+    parser.add_argument("--output-dir", default=os.path.expanduser("~/corteva-mic-workspace-assets/output"), help="Root output directory (default: ~/corteva-mic-workspace-assets/output)")
     parser.add_argument("--json",       action="store_true", help="Print JSON to stdout (single workspace only)")
     parser.add_argument(
         "--section", choices=SECTION_KEYS, metavar="SECTION",
