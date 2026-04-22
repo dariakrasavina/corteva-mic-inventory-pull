@@ -18,6 +18,58 @@ In **Production** workspaces, PAT tokens are often disabled for security reasons
 
 ---
 
+## Quick Start
+
+Follow these steps to go from zero to a full inventory.
+
+### Step 1 — Clone the repo
+
+```bash
+git clone https://github.com/dariakrasavina/corteva-mic-inventory-pull.git
+cd corteva-mic-inventory-pull
+```
+
+### Step 2 — Install the Databricks SDK
+
+```bash
+pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/simple
+```
+
+> If you have access to public PyPI: `pip3 install databricks-sdk`
+
+### Step 3 — Authenticate to your workspace
+
+Run this once per workspace. Replace the `--host` URL with the workspace you want to inventory and give it any profile name you like:
+
+```bash
+databricks auth login --host https://adb-7405604679876710.10.azuredatabricks.net --profile mic-uat
+```
+
+A browser window will open — log in with your Databricks account. The token is saved automatically to `~/.databrickscfg`.
+
+Repeat this step for each workspace you want to inventory, using a different `--profile` name each time:
+
+```bash
+databricks auth login --host https://adb-7405607360771421.1.azuredatabricks.net --profile mic-dev
+databricks auth login --host https://adb-7405607553229575.15.azuredatabricks.net --profile mic-prod
+```
+
+### Step 4 — Run the inventory
+
+```bash
+python3 inventory_pull_sdk.py --profile mic-uat --save
+```
+
+Output is saved to `~/corteva-mic-workspace-assets/output/<profile-name>/` — one JSON and one CSV file per asset type.
+
+To run against multiple workspaces at once, fill in `workspaces.json` with the profile for each workspace (see [Setup](#setup)) and run:
+
+```bash
+python3 inventory_pull_sdk.py --config workspaces.json
+```
+
+---
+
 ## What it collects
 
 | Asset | Details |
