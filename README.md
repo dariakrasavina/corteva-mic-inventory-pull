@@ -20,62 +20,59 @@ In **Production** workspaces, PAT tokens are often disabled for security reasons
 
 ## Quick Start
 
-Choose the path that matches how you are running the script.
+Before you run the script, answer one question: **are you a human running this manually, or is this being run automatically by a service principal?**
+
+The reason this matters: a human can authenticate by logging in through a browser. A service principal is an automated account with no ability to open a browser — it must authenticate using a pre-configured client ID and secret instead.
 
 ---
 
-### Path A — Human user (Dev / UAT)
+### If you are a human user (running manually on Dev or UAT)
 
-Use this path if you are running the script interactively from your laptop against a Dev or UAT workspace where you can log in via browser.
-
-**1. Clone the repo**
+**Step 1 — Clone the repo**
 
 ```bash
 git clone https://github.com/dariakrasavina/corteva-mic-inventory-pull.git
 cd corteva-mic-inventory-pull
 ```
 
-**2. Install the Databricks SDK**
+**Step 2 — Install the Databricks SDK**
 
 ```bash
 pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/simple
 ```
 
-> If you have access to public PyPI: `pip3 install databricks-sdk`
+**Step 3 — Log in to your workspace via browser**
 
-**3. Authenticate via browser (OAuth)**
-
-Run this once per workspace. Replace `<workspace-host>` with the workspace URL and `<profile-name>` with any name you choose (e.g. `dev`, `uat`):
+This command opens a browser window where you log in with your Databricks account. Run it once per workspace you want to inventory. You can use any name you like for `<profile-name>` — it is just a local label (e.g. `dev`, `uat`):
 
 ```bash
 databricks auth login --host <workspace-host> --profile <profile-name>
 ```
 
-A browser window will open — log in with your Databricks account. The token is saved automatically to `~/.databrickscfg`. Repeat for each workspace using a different profile name each time.
+After logging in, your credentials are saved to `~/.databrickscfg` on your machine. You will not need to log in again until the token expires.
 
 > Workspace host URLs can be found in the [Workspaces](#workspaces) table at the bottom of this README.
 
-**4. Run the inventory**
+**Step 4 — Run the inventory**
 
 ```bash
 python3 inventory_pull_sdk.py --profile <profile-name> --save
 ```
 
-Output is saved to `~/corteva-mic-workspace-assets/output/<profile-name>/` — one JSON and one CSV file per asset type.
+Output files are saved to `~/corteva-mic-workspace-assets/output/<profile-name>/`.
 
 ---
 
-### Path B — Service principal (Production)
+### If you are a service principal (running automatically on Production)
 
-Use this path when running the script in an automated or production context where no browser login is possible. A service principal authenticates using its client ID and secret — no interactive login required.
+A service principal cannot log in through a browser. Instead, it uses a **client ID and client secret** that are pre-configured before the script runs. These credentials are created by a workspace admin in the Databricks account console under **Service Principals**.
 
-**1. Clone the repo and install the SDK** (same as Path A, steps 1 and 2)
+There are two ways to provide the credentials:
 
-**2. Set up credentials**
+**Option 1 — Environment variables (recommended for automated pipelines)**
 
-Choose one of the following options:
+Set these three environment variables before running the script. The SDK will pick them up automatically:
 
-**Option A — environment variables:**
 ```bash
 export DATABRICKS_HOST=<workspace-host>
 export DATABRICKS_CLIENT_ID=<sp-client-id>
@@ -83,11 +80,11 @@ export DATABRICKS_CLIENT_SECRET=<sp-client-secret>
 
 python3 inventory_pull_sdk.py --save
 ```
-The SDK picks up the credentials automatically — no `--profile` flag needed.
 
-**Option B — `~/.databrickscfg` profile:**
+**Option 2 — Config file (`~/.databrickscfg`)**
 
-Add a profile for the service principal manually (no browser needed):
+If you prefer a config file, manually add a profile for the service principal. Unlike the human login flow, this does not require a browser — you just paste the credentials directly into the file:
+
 ```ini
 [<profile-name>]
 host          = <workspace-host>
@@ -96,19 +93,18 @@ client_secret = <sp-client-secret>
 ```
 
 Then run:
+
 ```bash
 python3 inventory_pull_sdk.py --profile <profile-name> --save
 ```
 
-**3. Obtain service principal credentials**
-
-The `client_id` and `client_secret` are created in your Databricks account console under **Service Principals**. Ask your workspace admin if you do not have access to create them.
+Output files are saved to `~/corteva-mic-workspace-assets/output/<profile-name>/`.
 
 ---
 
 ### Running against multiple workspaces at once
 
-Fill in `workspaces.json` with a profile name for each workspace (see [Setup](#setup)) and run:
+Regardless of whether you are a human or service principal, you can run the inventory across all workspaces in one go. Fill in `workspaces.json` with a profile name for each workspace (see [Setup](#setup)) and run:
 
 ```bash
 python3 inventory_pull_sdk.py --config workspaces.json
