@@ -542,21 +542,40 @@ def collect_registered_models(c: InventoryCollector) -> list[dict]:
             "type":         "unity_catalog",
         })
 
-    # Legacy workspace model registry
+    # Legacy workspace model registry — try SDK first, fall back to direct API
     legacy = c.safe(
         "model_registry.list (legacy)",
-        lambda: list(c.w.model_registry.list_registered_models()),
-        default=[],
+        lambda: list(c.w.model_registry.list_registered_models(max_results=1000)),
+        default=None,
     )
-    for m in legacy:
-        models.append({
-            "full_name":    None,
-            "catalog_name": None,
-            "schema_name":  None,
-            "name":         m.name,
-            "owner":        None,
-            "type":         "workspace_registry",
-        })
+    if legacy is None:
+        # SDK method unavailable in this version — fall back to direct HTTP call
+        try:
+            data = c.w.api_client.do(
+                "GET", "/api/2.0/mlflow/registered-models/list", query={"max_results": 1000}
+            )
+            legacy = data.get("registered_models") or []
+            for m in legacy:
+                models.append({
+                    "full_name":    None,
+                    "catalog_name": None,
+                    "schema_name":  None,
+                    "name":         m.get("name"),
+                    "owner":        None,
+                    "type":         "workspace_registry",
+                })
+        except Exception as exc:  # noqa: BLE001
+            c._other_errors.append(f"model_registry.list (legacy fallback): {exc}")
+    else:
+        for m in legacy:
+            models.append({
+                "full_name":    None,
+                "catalog_name": None,
+                "schema_name":  None,
+                "name":         m.name,
+                "owner":        None,
+                "type":         "workspace_registry",
+            })
 
     return models
 
