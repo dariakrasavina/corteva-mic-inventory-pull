@@ -20,16 +20,22 @@ In **Production** workspaces, PAT tokens are often disabled for security reasons
 
 ## Quick Start
 
-Follow these steps to go from zero to a full inventory.
+Choose the path that matches how you are running the script.
 
-### Step 1 — Clone the repo
+---
+
+### Path A — Human user (Dev / UAT)
+
+Use this path if you are running the script interactively from your laptop against a Dev or UAT workspace where you can log in via browser.
+
+**1. Clone the repo**
 
 ```bash
 git clone https://github.com/dariakrasavina/corteva-mic-inventory-pull.git
 cd corteva-mic-inventory-pull
 ```
 
-### Step 2 — Install the Databricks SDK
+**2. Install the Databricks SDK**
 
 ```bash
 pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/simple
@@ -37,27 +43,19 @@ pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/si
 
 > If you have access to public PyPI: `pip3 install databricks-sdk`
 
-### Step 3 — Authenticate to your workspace
+**3. Authenticate via browser (OAuth)**
 
-Run this once per workspace you want to inventory. Replace `<workspace-host>` with your workspace URL and `<profile-name>` with any name you choose (e.g. `dev`, `uat`, `prod`):
+Run this once per workspace. Replace `<workspace-host>` with the workspace URL and `<profile-name>` with any name you choose (e.g. `dev`, `uat`):
 
 ```bash
 databricks auth login --host <workspace-host> --profile <profile-name>
 ```
 
-A browser window will open — log in with your Databricks account. The token is saved automatically to `~/.databrickscfg`.
-
-Repeat for each workspace, using a different profile name each time:
-
-```bash
-databricks auth login --host <workspace-host-1> --profile <profile-name-1>
-databricks auth login --host <workspace-host-2> --profile <profile-name-2>
-databricks auth login --host <workspace-host-3> --profile <profile-name-3>
-```
+A browser window will open — log in with your Databricks account. The token is saved automatically to `~/.databrickscfg`. Repeat for each workspace using a different profile name each time.
 
 > Workspace host URLs can be found in the [Workspaces](#workspaces) table at the bottom of this README.
 
-### Step 4 — Run the inventory
+**4. Run the inventory**
 
 ```bash
 python3 inventory_pull_sdk.py --profile <profile-name> --save
@@ -65,7 +63,52 @@ python3 inventory_pull_sdk.py --profile <profile-name> --save
 
 Output is saved to `~/corteva-mic-workspace-assets/output/<profile-name>/` — one JSON and one CSV file per asset type.
 
-To run against multiple workspaces at once, fill in `workspaces.json` with the profile for each workspace (see [Setup](#setup)) and run:
+---
+
+### Path B — Service principal (Production)
+
+Use this path when running the script in an automated or production context where no browser login is possible. A service principal authenticates using its client ID and secret — no interactive login required.
+
+**1. Clone the repo and install the SDK** (same as Path A, steps 1 and 2)
+
+**2. Set up credentials**
+
+Choose one of the following options:
+
+**Option A — environment variables:**
+```bash
+export DATABRICKS_HOST=<workspace-host>
+export DATABRICKS_CLIENT_ID=<sp-client-id>
+export DATABRICKS_CLIENT_SECRET=<sp-client-secret>
+
+python3 inventory_pull_sdk.py --save
+```
+The SDK picks up the credentials automatically — no `--profile` flag needed.
+
+**Option B — `~/.databrickscfg` profile:**
+
+Add a profile for the service principal manually (no browser needed):
+```ini
+[<profile-name>]
+host          = <workspace-host>
+client_id     = <sp-client-id>
+client_secret = <sp-client-secret>
+```
+
+Then run:
+```bash
+python3 inventory_pull_sdk.py --profile <profile-name> --save
+```
+
+**3. Obtain service principal credentials**
+
+The `client_id` and `client_secret` are created in your Databricks account console under **Service Principals**. Ask your workspace admin if you do not have access to create them.
+
+---
+
+### Running against multiple workspaces at once
+
+Fill in `workspaces.json` with a profile name for each workspace (see [Setup](#setup)) and run:
 
 ```bash
 python3 inventory_pull_sdk.py --config workspaces.json
