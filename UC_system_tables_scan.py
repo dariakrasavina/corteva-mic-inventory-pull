@@ -209,27 +209,14 @@ def scan_table_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> list
     Uses system.access.lineage (available in most workspaces).
     Falls back to system.lineage.table_lineage if the former does not exist.
     """
-    # Try system.access.lineage first (more commonly available)
     sql = f"""
         SELECT *
-        FROM system.access.lineage
+        FROM system.access.table_lineage
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
         ORDER BY event_time DESC
         LIMIT 50000
     """
-    rows = _run_query(w, warehouse_id, sql, "table_lineage (system.access.lineage)")
-    if rows:
-        return rows
-
-    # Fall back to system.lineage.table_lineage
-    sql = f"""
-        SELECT *
-        FROM system.lineage.table_lineage
-        WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
-        ORDER BY event_time DESC
-        LIMIT 50000
-    """
-    return _run_query(w, warehouse_id, sql, "table_lineage (system.lineage.table_lineage)")
+    return _run_query(w, warehouse_id, sql, "table_lineage")
 
 
 def scan_column_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
