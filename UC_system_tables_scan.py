@@ -443,19 +443,51 @@ def scan_dab_assets(w: WorkspaceClient, warehouse_id: str, days: int) -> list[di
     return dab_assets
 
 
+def scan_lakeflow_jobs(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
+    """
+    Jobs metadata from system.lakeflow.jobs — shows deployment method (DABs vs manual),
+    run_as user (service principal vs human), creator, and schedule.
+    Useful for identifying which jobs are bundle-managed and which run as service principals.
+    """
+    sql = """
+        SELECT *
+        FROM system.lakeflow.jobs
+        ORDER BY change_time DESC
+        LIMIT 50000
+    """
+    return _run_query(w, warehouse_id, sql, "lakeflow_jobs")
+
+
+def scan_lakeflow_pipelines(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
+    """
+    Pipeline metadata from system.lakeflow.pipelines — shows deployment method (DABs vs manual),
+    run_as user (service principal vs human), creator, and trigger type.
+    Useful for identifying which DLT pipelines are bundle-managed and which run as service principals.
+    """
+    sql = """
+        SELECT *
+        FROM system.lakeflow.pipelines
+        ORDER BY change_time DESC
+        LIMIT 50000
+    """
+    return _run_query(w, warehouse_id, sql, "lakeflow_pipelines")
+
+
 # ---------------------------------------------------------------------------
 # Section registry
 # ---------------------------------------------------------------------------
 
 SECTIONS = [
-    ("discover",       "Available System Tables",   discover_system_tables),
-    ("table_lineage",  "Table Lineage",             scan_table_lineage),
-    ("column_lineage", "Column Lineage",            scan_column_lineage),
-    ("audit_logs",     "Access Audit Logs",         scan_audit_logs),
-    ("query_history",  "Query History",             scan_query_history),
-    ("billing_usage",  "Billing & DBU Usage",       scan_billing_usage),
-    ("cluster_usage",  "Cluster Usage",             scan_cluster_usage),
-    ("dab_assets",     "DAB-Deployed Assets",       scan_dab_assets),
+    ("discover",           "Available System Tables",          discover_system_tables),
+    ("table_lineage",      "Table Lineage",                    scan_table_lineage),
+    ("column_lineage",     "Column Lineage",                   scan_column_lineage),
+    ("audit_logs",         "Access Audit Logs",                scan_audit_logs),
+    ("query_history",      "Query History",                    scan_query_history),
+    ("billing_usage",      "Billing & DBU Usage",              scan_billing_usage),
+    ("cluster_usage",      "Cluster Usage",                    scan_cluster_usage),
+    ("dab_assets",         "DAB-Deployed Assets",              scan_dab_assets),
+    ("lakeflow_jobs",      "Jobs (deployment & run_as)",       scan_lakeflow_jobs),
+    ("lakeflow_pipelines", "Pipelines (deployment & run_as)",  scan_lakeflow_pipelines),
 ]
 
 SECTION_KEYS = [k for k, _, _ in SECTIONS]
