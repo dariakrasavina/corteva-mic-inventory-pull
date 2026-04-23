@@ -239,7 +239,7 @@ def scan_column_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> lis
     """
     sql = f"""
         SELECT *
-        FROM system.lineage.column_lineage
+        FROM system.access.column_lineage
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
         ORDER BY event_time DESC
         LIMIT 50000
