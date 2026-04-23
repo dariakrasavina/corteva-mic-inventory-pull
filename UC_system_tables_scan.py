@@ -186,35 +186,50 @@ def _warn(msg: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def discover_system_tables(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
+    """
+    Discovers all available system tables in this workspace.
+    Useful for understanding what data is available before running other scans.
+    """
+    sql = """
+        SELECT table_catalog, table_schema, table_name, table_type, comment
+        FROM system.information_schema.tables
+        WHERE table_catalog = 'system'
+        ORDER BY table_schema, table_name
+    """
+    return _run_query(w, warehouse_id, sql, "discover_system_tables")
+
+
 def scan_table_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
     """
     Table lineage — shows which entities (jobs, notebooks, pipelines, dashboards)
     read from or write to each table. Critical for understanding migration dependencies
     and the order in which assets should be moved.
+
+    Uses system.access.lineage (available in most workspaces).
+    Falls back to system.lineage.table_lineage if the former does not exist.
     """
+    # Try system.access.lineage first (more commonly available)
     sql = f"""
-        SELECT
-            source_table_full_name,
-            source_table_catalog,
-            source_table_schema,
-            source_table_name,
-            target_table_full_name,
-            target_table_catalog,
-            target_table_schema,
-            target_table_name,
-            source_type,
-            target_type,
-            entity_type,
-            entity_id,
-            entity_name,
-            created_by,
-            event_time
+        SELECT *
+        FROM system.access.lineage
+        WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
+        ORDER BY event_time DESC
+        LIMIT 50000
+    """
+    rows = _run_query(w, warehouse_id, sql, "table_lineage (system.access.lineage)")
+    if rows:
+        return rows
+
+    # Fall back to system.lineage.table_lineage
+    sql = f"""
+        SELECT *
         FROM system.lineage.table_lineage
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
         ORDER BY event_time DESC
         LIMIT 50000
     """
-    return _run_query(w, warehouse_id, sql, "table_lineage")
+    return _run_query(w, warehouse_id, sql, "table_lineage (system.lineage.table_lineage)")
 
 
 def scan_column_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
@@ -223,15 +238,7 @@ def scan_column_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> lis
     Useful for identifying tightly coupled transformations that must move together.
     """
     sql = f"""
-        SELECT
-            source_table_full_name,
-            source_column_name,
-            target_table_full_name,
-            target_column_name,
-            entity_type,
-            entity_id,
-            entity_name,
-            event_time
+        SELECT *
         FROM system.lineage.column_lineage
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
         ORDER BY event_time DESC
@@ -454,7 +461,8 @@ def scan_dab_assets(w: WorkspaceClient, warehouse_id: str, days: int) -> list[di
 # ---------------------------------------------------------------------------
 
 SECTIONS = [
-    ("table_lineage",  "Table Lineage",            scan_table_lineage),
+    ("discover",       "Available System Tables",   discover_system_tables),
+    ("table_lineage",  "Table Lineage",             scan_table_lineage),
     ("column_lineage", "Column Lineage",            scan_column_lineage),
     ("audit_logs",     "Access Audit Logs",         scan_audit_logs),
     ("query_history",  "Query History",             scan_query_history),
