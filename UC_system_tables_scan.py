@@ -210,11 +210,27 @@ def scan_table_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> list
     Falls back to system.lineage.table_lineage if the former does not exist.
     """
     sql = f"""
-        SELECT *
+        SELECT
+            event_time,
+            event_date,
+            source_table_full_name,
+            source_table_catalog,
+            source_table_schema,
+            source_table_name,
+            source_type,
+            target_table_full_name,
+            target_table_catalog,
+            target_table_schema,
+            target_table_name,
+            target_type,
+            entity_type,
+            entity_id,
+            entity_name,
+            created_by
         FROM system.access.table_lineage
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
         ORDER BY event_time DESC
-        LIMIT 50000
+        LIMIT 10000
     """
     return _run_query(w, warehouse_id, sql, "table_lineage")
 
@@ -225,11 +241,27 @@ def scan_column_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> lis
     Useful for identifying tightly coupled transformations that must move together.
     """
     sql = f"""
-        SELECT *
+        SELECT
+            event_time,
+            event_date,
+            source_table_full_name,
+            source_table_catalog,
+            source_table_schema,
+            source_table_name,
+            source_column_name,
+            target_table_full_name,
+            target_table_catalog,
+            target_table_schema,
+            target_table_name,
+            target_column_name,
+            entity_type,
+            entity_id,
+            entity_name,
+            created_by
         FROM system.access.column_lineage
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
         ORDER BY event_time DESC
-        LIMIT 50000
+        LIMIT 10000
     """
     return _run_query(w, warehouse_id, sql, "column_lineage")
 
