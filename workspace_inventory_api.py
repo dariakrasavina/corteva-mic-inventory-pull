@@ -12,14 +12,14 @@ Collects: jobs, pipelines, notebooks, tables, volumes, functions,
           apps, repos, registered ml models.
 
 ─── Single workspace ────────────────────────────────────────────────────────
-    python inventory_pull_urllib.py --host https://adb-xxx.azuredatabricks.net --token dapiXXX
-    python inventory_pull_urllib.py --host ... --token ... --save
-    python inventory_pull_urllib.py --host ... --token ... --section jobs
-    python inventory_pull_urllib.py --host ... --token ... --json > out.json
+    python workspace_inventory_api.py --host https://adb-xxx.azuredatabricks.net --token dapiXXX
+    python workspace_inventory_api.py --host ... --token ... --save
+    python workspace_inventory_api.py --host ... --token ... --section jobs
+    python workspace_inventory_api.py --host ... --token ... --json > out.json
 
 ─── Multiple workspaces (reads workspaces.json) ─────────────────────────────
-    python inventory_pull_urllib.py --config workspaces.json
-    python inventory_pull_urllib.py --config workspaces.json --section tables
+    python workspace_inventory_api.py --config workspaces.json
+    python workspace_inventory_api.py --config workspaces.json --section tables
 
 ─── Options ─────────────────────────────────────────────────────────────────
     --config FILE       Path to workspaces JSON config (runs all workspaces)
