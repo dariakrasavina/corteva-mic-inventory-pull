@@ -8,7 +8,7 @@ There are two scripts — choose based on the environment you are running agains
 |---|---|---|
 | **Approach** | Direct REST API calls via Python built-in `urllib` | Databricks Python SDK (`databricks-sdk`) |
 | **Dependencies** | None — Python standard library only | `pip install databricks-sdk` |
-| **Auth** | PAT token only | PAT token, `~/.databrickscfg` profiles, env vars, OAuth M2M |
+| **Auth** | PAT token only | PAT token, OAuth U2M (browser login), OAuth M2M (service principal), env vars |
 | **Recommended for** | Dev and UAT — PAT tokens are available in lower environments | Production — service principals with OAuth M2M are required |
 
 **Why the distinction?**
@@ -35,29 +35,51 @@ git clone https://github.com/dariakrasavina/corteva-mic-inventory-pull.git
 cd corteva-mic-inventory-pull
 ```
 
-**Step 2 — Install the Databricks SDK**
+**Step 2 — Choose which script to use**
+
+This determines how you authenticate and whether you need to install anything:
+
+| | `workspace_inventory_api.py` | `workspace_inventory_sdk.py` |
+|---|---|---|
+| **Requires install** | No — works out of the box | Yes — must install Databricks SDK first |
+| **Auth method** | PAT token (generated in workspace settings) | OAuth U2M — log in via browser, no token needed |
+| **When to use** | Quickest option if you can generate a PAT token | Use if your workspace does not allow PAT tokens |
+
+---
+
+**If using `workspace_inventory_api.py` (PAT token — no install needed):**
+
+Generate a PAT token in your workspace settings (see [How to generate a PAT token](#how-to-generate-a-pat-token)), then run:
+
+```bash
+python3 workspace_inventory_api.py --host <workspace-host> --token <your-pat-token> --save
+```
+
+---
+
+**If using `workspace_inventory_sdk.py` (OAuth U2M — browser login):**
+
+First install the Databricks SDK:
 
 ```bash
 pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/simple
 ```
 
-**Step 3 — Log in to your workspace via browser**
-
-This command opens a browser window where you log in with your Databricks account. Run it once per workspace you want to inventory. You can use any name you like for `<profile-name>` — it is just a local label (e.g. `dev`, `uat`):
+Then log in to your workspace via browser. This command opens a browser window where you sign in with your Databricks account. Run it once per workspace — you can use any name you like for `<profile-name>` (e.g. `dev`, `uat`):
 
 ```bash
 databricks auth login --host <workspace-host> --profile <profile-name>
 ```
 
-After logging in, your credentials are saved to `~/.databrickscfg` on your machine. You will not need to log in again until the token expires.
+After logging in, your credentials are saved automatically to `~/.databrickscfg`. You will not need to log in again until the token expires.
 
-> Workspace host URLs can be found in the [Workspaces](#workspaces) table at the bottom of this README.
-
-**Step 4 — Run the inventory**
+Then run the inventory:
 
 ```bash
 python3 workspace_inventory_sdk.py --profile <profile-name> --save
 ```
+
+> Workspace host URLs can be found in the [Workspaces](#workspaces) table at the bottom of this README.
 
 Output files are saved to `~/corteva-mic-workspace-assets/output/<profile-name>/`.
 
