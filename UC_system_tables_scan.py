@@ -107,7 +107,7 @@ def _run_query(
         response = w.statement_execution.execute_statement(
             statement=sql,
             warehouse_id=warehouse_id,
-            wait_timeout="60s",
+            wait_timeout="50s",
             disposition=Disposition.INLINE,
         )
     except PermissionDenied:
@@ -403,7 +403,7 @@ def scan_dab_assets(w: WorkspaceClient, warehouse_id: str, days: int) -> list[di
         pipelines = list(w.pipelines.list_pipelines())
         for p in pipelines:
             detail = w.pipelines.get(pipeline_id=p.pipeline_id)
-            tags = detail.configuration or {}
+            tags = getattr(detail, "configuration", None) or getattr(detail, "config", None) or {}
             if any("bundle" in str(k).lower() for k in tags):
                 dab_assets.append({
                     "asset_type":    "pipeline",
