@@ -238,22 +238,10 @@ def scan_audit_logs(w: WorkspaceClient, warehouse_id: str, days: int) -> list[di
     """
     Access audit logs — records who accessed which assets and when.
     Useful for identifying active users and replicating access patterns in the new tenant.
+    Limit kept low (5000) to avoid hitting the INLINE byte limit.
     """
     sql = f"""
-        SELECT
-            event_time,
-            event_date,
-            workspace_id,
-            source_ip_address,
-            user_agent,
-            session_id,
-            user_identity,
-            service_name,
-            action_name,
-            request_id,
-            request_params,
-            response,
-            audit_level
+        SELECT *
         FROM system.access.audit
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
           AND action_name IN (
@@ -266,7 +254,7 @@ def scan_audit_logs(w: WorkspaceClient, warehouse_id: str, days: int) -> list[di
             'bundleDeployment', 'bundleRun'
           )
         ORDER BY event_time DESC
-        LIMIT 50000
+        LIMIT 5000
     """
     return _run_query(w, warehouse_id, sql, "audit_logs")
 
@@ -278,26 +266,11 @@ def scan_query_history(w: WorkspaceClient, warehouse_id: str, days: int) -> list
     Dormant assets may not need to be prioritized in migration.
     """
     sql = f"""
-        SELECT
-            statement_id,
-            executed_by,
-            statement_type,
-            status,
-            compute,
-            warehouse_id,
-            start_time,
-            end_time,
-            total_duration_ms,
-            rows_produced,
-            read_rows,
-            read_bytes,
-            produced_rows,
-            written_bytes,
-            error_message
+        SELECT *
         FROM system.query.history
         WHERE start_time >= dateadd(DAY, -{days}, current_timestamp())
         ORDER BY start_time DESC
-        LIMIT 50000
+        LIMIT 5000
     """
     return _run_query(w, warehouse_id, sql, "query_history")
 
@@ -306,24 +279,14 @@ def scan_billing_usage(w: WorkspaceClient, warehouse_id: str, days: int) -> list
     """
     Billing and DBU usage — shows compute cost per asset, SKU, and workspace.
     Useful for sizing the new tenant and understanding which workloads are expensive.
+    Note: requires workspace admin or billing permissions.
     """
     sql = f"""
-        SELECT
-            account_id,
-            workspace_id,
-            sku_name,
-            cloud,
-            usage_start_time,
-            usage_end_time,
-            usage_date,
-            custom_tags,
-            usage_unit,
-            usage_quantity,
-            usage_metadata
+        SELECT *
         FROM system.billing.usage
         WHERE usage_date >= dateadd(DAY, -{days}, current_date())
         ORDER BY usage_start_time DESC
-        LIMIT 50000
+        LIMIT 10000
     """
     return _run_query(w, warehouse_id, sql, "billing_usage")
 
@@ -335,24 +298,7 @@ def scan_cluster_usage(w: WorkspaceClient, warehouse_id: str, days: int) -> list
     in the new tenant.
     """
     sql = f"""
-        SELECT
-            cluster_id,
-            cluster_name,
-            owned_by,
-            create_time,
-            delete_time,
-            change_time,
-            driver_node_type,
-            worker_node_type,
-            min_autoscale_workers,
-            max_autoscale_workers,
-            auto_termination_minutes,
-            enable_elastic_disk,
-            cluster_source,
-            instance_pool_id,
-            cluster_creator,
-            tags,
-            spark_version
+        SELECT *
         FROM system.compute.clusters
         WHERE change_time >= dateadd(DAY, -{days}, current_timestamp())
         ORDER BY change_time DESC
@@ -415,12 +361,7 @@ def scan_dab_assets(w: WorkspaceClient, warehouse_id: str, days: int) -> list[di
 
     # Detect bundle deployments from audit logs
     sql = f"""
-        SELECT
-            event_time,
-            user_identity,
-            action_name,
-            request_params,
-            response
+        SELECT *
         FROM system.access.audit
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
           AND action_name IN ('bundleDeployment', 'bundleRun', 'createBundleDeployment')
