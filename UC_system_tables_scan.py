@@ -225,7 +225,7 @@ def scan_table_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> list
             target_type,
             entity_type,
             entity_id,
-            entity_name,
+            entity_run_id,
             created_by
         FROM system.access.table_lineage
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
@@ -256,7 +256,7 @@ def scan_column_lineage(w: WorkspaceClient, warehouse_id: str, days: int) -> lis
             target_column_name,
             entity_type,
             entity_id,
-            entity_name,
+            entity_run_id,
             created_by
         FROM system.access.column_lineage
         WHERE event_time >= dateadd(DAY, -{days}, current_timestamp())
