@@ -19,6 +19,24 @@ In **Dev and UAT** workspaces, users can typically generate PAT tokens directly 
 
 In **Production** workspaces, PAT tokens are often disabled for security reasons. Access must go through a service principal using OAuth M2M (machine-to-machine) authentication. `workspace_inventory_sdk.py` handles this natively via the Databricks SDK — no manual token management needed.
 
+**What both scripts collect:**
+
+| Asset | Details |
+|---|---|
+| **Jobs** | Name, creator, schedule, last run time & status |
+| **DLT Pipelines** | Name, creator, trigger type, last run time |
+| **Notebooks** | Path, language |
+| **Tables** | Catalog, schema, table name, type, format, owner, created/updated timestamps |
+| **Volumes** | Catalog, schema, volume name, type, storage location, owner |
+| **Functions** | Catalog, schema, function name, language, owner |
+| **Genie Spaces** | Space ID, title |
+| **ML Experiments** | Name, lifecycle stage, artifact location |
+| **Dashboards** | Name, type (Lakeview or Classic) |
+| **Serving Endpoints** | Name, creator, ready state (covers agents & models) |
+| **Apps** | Name, description, status, URL |
+| **Repos / Git Folders** | Path, Git URL, provider, branch, owner |
+| **Registered ML Models** | Full name, catalog, schema, owner (Unity Catalog + legacy registry) |
+
 ---
 
 ### Configuration inventory — run alongside the asset inventory
