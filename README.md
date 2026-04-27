@@ -2,19 +2,23 @@
 
 A reusable tool to inventory assets across one or multiple Databricks workspaces.
 
-There are two scripts — choose based on the environment you are running against:
+There are three scripts — choose based on what you need and where you are running:
 
-| | `workspace_inventory_api.py` | `workspace_inventory_sdk.py` |
-|---|---|---|
-| **Approach** | Direct REST API calls via Python built-in `urllib` | Databricks Python SDK (`databricks-sdk`) |
-| **Dependencies** | None — Python standard library only | `pip install databricks-sdk` |
-| **Auth** | PAT token only | PAT token, OAuth U2M (browser login), OAuth M2M (service principal), env vars |
-| **Recommended for** | Dev and UAT — PAT tokens are available in lower environments | Production — service principals with OAuth M2M are required |
+| | `workspace_inventory_api.py` | `workspace_inventory_sdk.py` | `workspace_config_inventory_sdk.py` |
+|---|---|---|---|
+| **What it collects** | Data assets (jobs, tables, notebooks, models…) | Data assets (jobs, tables, notebooks, models…) | Workspace configuration (users, clusters, settings, secrets…) |
+| **Approach** | Direct REST API calls via Python built-in `urllib` | Databricks Python SDK (`databricks-sdk`) | Databricks Python SDK (`databricks-sdk`) |
+| **Dependencies** | None — Python standard library only | `pip install databricks-sdk` | `pip install databricks-sdk` |
+| **Auth** | PAT token only | PAT token, OAuth U2M (browser login), OAuth M2M (service principal), env vars | PAT token, OAuth U2M (browser login), OAuth M2M (service principal), env vars |
+| **Recommended for** | Dev and UAT — PAT tokens are available in lower environments | Production — service principals with OAuth M2M are required | Any environment — run alongside the asset inventory |
 
-**Why the distinction?**
+**Why the distinction between api.py and sdk.py?**
 In **Dev and UAT** workspaces, users can typically generate PAT tokens directly in the workspace settings. `workspace_inventory_api.py` requires no installation and works immediately with a PAT token.
 
 In **Production** workspaces, PAT tokens are often disabled for security reasons. Access must go through a service principal using OAuth M2M (machine-to-machine) authentication. `workspace_inventory_sdk.py` handles this natively via the Databricks SDK — no manual token management needed.
+
+**What does `workspace_config_inventory_sdk.py` add?**
+This script is a **companion** to the asset inventory scripts. While `workspace_inventory_sdk.py` collects data assets (tables, jobs, models), `workspace_config_inventory_sdk.py` collects workspace-level **configuration** — who has access, how compute is configured, what settings are enabled, and what security controls are in place. Run both scripts together for a complete picture of a workspace before a migration.
 
 ---
 
@@ -73,10 +77,16 @@ databricks auth login --host <workspace-host> --profile <profile-name>
 
 After logging in, your credentials are saved automatically to `~/.databrickscfg`. You will not need to log in again until the token expires.
 
-Then run the inventory:
+Then run the asset inventory:
 
 ```bash
 python3 workspace_inventory_sdk.py --profile <profile-name> --save
+```
+
+And optionally run the configuration inventory using the same profile:
+
+```bash
+python3 workspace_config_inventory_sdk.py --profile <profile-name> --save
 ```
 
 > Workspace host URLs can be found in the [Workspaces](#workspaces) table at the bottom of this README.
@@ -101,6 +111,7 @@ export DATABRICKS_CLIENT_ID=<sp-client-id>
 export DATABRICKS_CLIENT_SECRET=<sp-client-secret>
 
 python3 workspace_inventory_sdk.py --save
+python3 workspace_config_inventory_sdk.py --save
 ```
 
 **Option 2 — Config file (`~/.databrickscfg`)**
@@ -118,6 +129,7 @@ Then run:
 
 ```bash
 python3 workspace_inventory_sdk.py --profile <profile-name> --save
+python3 workspace_config_inventory_sdk.py --profile <profile-name> --save
 ```
 
 Output files are saved to `~/corteva-mic-workspace-assets/output/<profile-name>/`.
@@ -130,11 +142,14 @@ Regardless of whether you are a human or service principal, you can run the inve
 
 ```bash
 python3 workspace_inventory_sdk.py --config workspaces.json
+python3 workspace_config_inventory_sdk.py --config workspaces.json
 ```
 
 ---
 
 ## What it collects
+
+### `workspace_inventory_api.py` and `workspace_inventory_sdk.py` — data assets
 
 | Asset | Details |
 |---|---|
@@ -152,6 +167,19 @@ python3 workspace_inventory_sdk.py --config workspaces.json
 | **Repos / Git Folders** | Path, Git URL, provider, branch, owner |
 | **Registered ML Models** | Full name, catalog, schema, owner (Unity Catalog + legacy registry) |
 
+### `workspace_config_inventory_sdk.py` — workspace configuration
+
+| Category | What is collected |
+|---|---|
+| **Identity** | Users (name, active status), groups (members), service principals |
+| **Compute** | Clusters (type, Spark version, autoscale, security mode), cluster policies, instance pools, SQL warehouses |
+| **Unity Catalog** | External locations (URL, credential, owner), storage credentials, connections (Lakehouse Federation) |
+| **Workspace Settings** | Legacy workspace_conf flags (37 known keys), workspace settings V2 (100+ feature flags), typed settings API, SQL global config |
+| **Platform Resources** | Global init scripts (metadata + content), IP access lists, secret scopes (scope names and key names only — values are never read), managed PAT tokens |
+| **SQL Assets** | Saved SQL queries, SQL alerts |
+
+> **Security note:** The script lists secret scope names and key names to show what secrets exist. It never reads or exports secret values.
+
 Output per asset type: one `.json` file + one `.csv` file, saved under `output/<workspace-name>/`.
 
 ---
@@ -163,7 +191,7 @@ Output per asset type: one `.json` file + one `.csv` file, saved under `output/<
 - Python 3.9+
 - No external packages — `urllib`, `csv`, and `json` are all part of the Python standard library
 
-### `workspace_inventory_sdk.py`
+### `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py`
 
 - Python 3.9+
 - `databricks-sdk >= 0.20.0`
@@ -188,13 +216,14 @@ Both scripts need credentials to connect to each Databricks workspace. The metho
 
 | Method | Supported by | How it works |
 |---|---|---|
-| **PAT token** | Both scripts | A `dapi...` token generated in your Databricks workspace settings |
-| **`~/.databrickscfg` profile** | `workspace_inventory_sdk.py` only | A named profile set up by the Databricks CLI (`databricks configure`) |
-| **Environment variables** | `workspace_inventory_sdk.py` only | `DATABRICKS_HOST` + `DATABRICKS_TOKEN` set in your shell |
-| **OAuth / Azure AD** | `workspace_inventory_sdk.py` only | Handled automatically by the SDK if configured |
+| **PAT token** | All three scripts | A `dapi...` token generated in your Databricks workspace settings |
+| **`~/.databrickscfg` profile** | `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only | A named profile set up by the Databricks CLI (`databricks configure`) |
+| **Environment variables** | `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only | `DATABRICKS_HOST` + `DATABRICKS_TOKEN` set in your shell |
+| **OAuth U2M** | `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only | Browser-based login via `databricks auth login` — no token needed |
+| **OAuth M2M (service principal)** | `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only | `DATABRICKS_HOST` + `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` |
 
 > If you are using **`workspace_inventory_api.py`**, PAT token is your only option.
-> If you are using **`workspace_inventory_sdk.py`**, any of the above methods work.
+> If you are using **`workspace_inventory_sdk.py`** or **`workspace_config_inventory_sdk.py`**, any of the above methods work.
 
 ### How to generate a PAT token
 
@@ -208,7 +237,7 @@ If your workspace allows PAT tokens (not all do — check with your workspace ad
 
 > ⚠️ Never commit your token to Git. `workspaces.json` is gitignored for this reason.
 
-### How to set up a `~/.databrickscfg` profile (`workspace_inventory_sdk.py` only)
+### How to set up a `~/.databrickscfg` profile (`workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only)
 
 If your workspace does not allow PAT tokens, use the Databricks CLI to configure a profile:
 
@@ -216,7 +245,7 @@ If your workspace does not allow PAT tokens, use the Databricks CLI to configure
 databricks configure --profile my-profile
 ```
 
-You will be prompted for the workspace host and your credentials. Once set up, pass `--profile my-profile` to `workspace_inventory_sdk.py`.
+You will be prompted for the workspace host and your credentials. Once set up, pass `--profile my-profile` to either SDK-based script.
 
 ---
 
@@ -244,7 +273,7 @@ Copy `workspaces.template.json` to `workspaces.json` and fill in credentials for
 ]
 ```
 
-**`workspace_inventory_sdk.py` — supports PAT token or `~/.databrickscfg` profile:**
+**`workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` — supports PAT token or `~/.databrickscfg` profile:**
 ```json
 [
   {
@@ -307,6 +336,32 @@ python3 workspace_inventory_sdk.py --config workspaces.json --output-dir /path/t
 python3 workspace_inventory_sdk.py --profile my-profile --json > out.json
 ```
 
+### `workspace_config_inventory_sdk.py` (requires databricks-sdk)
+
+Collects workspace configuration rather than data assets. Use alongside `workspace_inventory_sdk.py` for a complete picture.
+
+```bash
+# All workspaces from config
+python3 workspace_config_inventory_sdk.py --config workspaces.json
+
+# Single workspace — PAT token
+python3 workspace_config_inventory_sdk.py --host https://adb-xxx.azuredatabricks.net --token dapi...
+
+# Single workspace — ~/.databrickscfg profile
+python3 workspace_config_inventory_sdk.py --profile my-profile
+
+# One section only
+python3 workspace_config_inventory_sdk.py --profile my-profile --section users
+python3 workspace_config_inventory_sdk.py --profile my-profile --section clusters
+python3 workspace_config_inventory_sdk.py --profile my-profile --section workspace_conf_legacy
+
+# Save to a custom directory
+python3 workspace_config_inventory_sdk.py --config workspaces.json --output-dir /path/to/output
+
+# Print JSON to stdout
+python3 workspace_config_inventory_sdk.py --profile my-profile --json > out.json
+```
+
 ---
 
 ## Output structure
@@ -314,12 +369,15 @@ python3 workspace_inventory_sdk.py --profile my-profile --json > out.json
 ```
 output/
 ├── sales-mi-dbw-01-dev/
-│   ├── sales-mi-dbw-01-dev_jobs.csv
+│   ├── sales-mi-dbw-01-dev_jobs.csv             ← from workspace_inventory_sdk.py
 │   ├── sales-mi-dbw-01-dev_jobs.json
-│   ├── sales-mi-dbw-01-dev_pipelines.csv
-│   ├── sales-mi-dbw-01-dev_pipelines.json
 │   ├── sales-mi-dbw-01-dev_tables.csv
-│   └── ... (one pair per asset type)
+│   ├── sales-mi-dbw-01-dev_tables.json
+│   ├── sales-mi-dbw-01-dev_users.csv            ← from workspace_config_inventory_sdk.py
+│   ├── sales-mi-dbw-01-dev_users.json
+│   ├── sales-mi-dbw-01-dev_clusters.csv
+│   ├── sales-mi-dbw-01-dev_clusters.json
+│   └── ... (one pair per asset/config type)
 ├── sales-mi-dbw-01-prod/
 │   └── ...
 └── mic-databricks-dev/
@@ -330,9 +388,25 @@ output/
 
 ## Available sections
 
-Pass any of these to `--section` to collect only that asset type:
+### `workspace_inventory_api.py` and `workspace_inventory_sdk.py`
+
+Pass any of these to `--section`:
 
 `jobs` · `pipelines` · `notebooks` · `tables` · `volumes` · `functions` · `genie_spaces` · `experiments` · `dashboards` · `serving_endpoints` · `apps` · `repos` · `registered_models`
+
+### `workspace_config_inventory_sdk.py`
+
+Pass any of these to `--section`:
+
+**Identity:** `users` · `groups` · `service_principals`
+
+**Compute:** `clusters` · `cluster_policies` · `instance_pools` · `sql_warehouses`
+
+**Unity Catalog:** `external_locations` · `storage_credentials` · `connections`
+
+**Workspace Settings:** `workspace_conf_legacy` · `workspace_settings_v2` · `workspace_settings_typed` · `sql_global_config` · `global_init_scripts` · `ip_access_lists` · `secret_scopes` · `tokens`
+
+**SQL Assets:** `sql_queries` · `sql_alerts`
 
 ---
 
@@ -342,7 +416,7 @@ Service principals are the recommended way to run this script in production — 
 
 **`workspace_inventory_api.py`** does not support service principals — it only accepts PAT tokens. Use this script for Dev and UAT environments where PAT tokens are available.
 
-**`workspace_inventory_sdk.py`** fully supports service principals via OAuth M2M (machine-to-machine). Use this script for production environments where PAT tokens are disabled and access must go through a service principal.
+**`workspace_inventory_sdk.py`** and **`workspace_config_inventory_sdk.py`** fully support service principals via OAuth M2M (machine-to-machine). Use these scripts for production environments where PAT tokens are disabled and access must go through a service principal.
 
 ### Option A — environment variables
 
@@ -350,7 +424,12 @@ Service principals are the recommended way to run this script in production — 
 DATABRICKS_HOST=https://adb-xxx.azuredatabricks.net \
 DATABRICKS_CLIENT_ID=<sp-client-id> \
 DATABRICKS_CLIENT_SECRET=<sp-secret> \
-python3 workspace_inventory_sdk.py
+python3 workspace_inventory_sdk.py --save
+
+DATABRICKS_HOST=https://adb-xxx.azuredatabricks.net \
+DATABRICKS_CLIENT_ID=<sp-client-id> \
+DATABRICKS_CLIENT_SECRET=<sp-secret> \
+python3 workspace_config_inventory_sdk.py --save
 ```
 
 ### Option B — `~/.databrickscfg` profile
@@ -367,7 +446,8 @@ client_secret = <sp-secret>
 Then run:
 
 ```bash
-python3 workspace_inventory_sdk.py --profile prod-sp
+python3 workspace_inventory_sdk.py --profile prod-sp --save
+python3 workspace_config_inventory_sdk.py --profile prod-sp --save
 ```
 
 ### Permissions required
@@ -379,6 +459,10 @@ The service principal needs the following access on the target workspace:
 | Jobs, pipelines, notebooks, repos, apps | Workspace read access (CAN VIEW) |
 | Tables, volumes, functions, models | `USE CATALOG` + `USE SCHEMA` on each catalog/schema |
 | Serving endpoints, experiments, dashboards | Workspace read access |
+| Users, groups, service principals | Workspace admin (or user admin role) |
+| Clusters, SQL warehouses, cluster policies | Workspace read access |
+| Workspace settings, IP access lists, tokens | Workspace admin |
+| Secret scopes | Access to individual scopes (or admin for all) |
 | Full inventory | Workspace admin or broad read-only service principal |
 
 ---
