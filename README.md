@@ -2,23 +2,37 @@
 
 A reusable tool to inventory assets across one or multiple Databricks workspaces.
 
-There are three scripts — choose based on what you need and where you are running:
+## Scripts
 
-| | `workspace_inventory_api.py` | `workspace_inventory_sdk.py` | `workspace_config_inventory_sdk.py` |
-|---|---|---|---|
-| **What it collects** | Data assets (jobs, tables, notebooks, models…) | Data assets (jobs, tables, notebooks, models…) | Workspace configuration (users, clusters, settings, secrets…) |
-| **Approach** | Direct REST API calls via Python built-in `urllib` | Databricks Python SDK (`databricks-sdk`) | Databricks Python SDK (`databricks-sdk`) |
-| **Dependencies** | None — Python standard library only | `pip install databricks-sdk` | `pip install databricks-sdk` |
-| **Auth** | PAT token only | PAT token, OAuth U2M (browser login), OAuth M2M (service principal), env vars | PAT token, OAuth U2M (browser login), OAuth M2M (service principal), env vars |
-| **Recommended for** | Dev and UAT — PAT tokens are available in lower environments | Production — service principals with OAuth M2M are required | Any environment — run alongside the asset inventory |
+### Asset inventory — choose one based on your environment
 
-**Why the distinction between api.py and sdk.py?**
+Both scripts collect the same workspace assets (jobs, tables, notebooks, models, and more). The difference is the approach and what authentication methods they support:
+
+| | `workspace_inventory_api.py` | `workspace_inventory_sdk.py` |
+|---|---|---|
+| **Approach** | Direct REST API calls via Python built-in `urllib` | Databricks Python SDK (`databricks-sdk`) |
+| **Dependencies** | None — Python standard library only | `pip install databricks-sdk` |
+| **Auth** | PAT token only | PAT token, OAuth U2M (browser login), OAuth M2M (service principal), env vars |
+| **Recommended for** | Dev and UAT — PAT tokens are available in lower environments | Production — service principals with OAuth M2M are required |
+
 In **Dev and UAT** workspaces, users can typically generate PAT tokens directly in the workspace settings. `workspace_inventory_api.py` requires no installation and works immediately with a PAT token.
 
 In **Production** workspaces, PAT tokens are often disabled for security reasons. Access must go through a service principal using OAuth M2M (machine-to-machine) authentication. `workspace_inventory_sdk.py` handles this natively via the Databricks SDK — no manual token management needed.
 
-**What does `workspace_config_inventory_sdk.py` add?**
-This script is a **companion** to the asset inventory scripts. While `workspace_inventory_sdk.py` collects data assets (tables, jobs, models), `workspace_config_inventory_sdk.py` collects workspace-level **configuration** — who has access, how compute is configured, what settings are enabled, and what security controls are in place. Run both scripts together for a complete picture of a workspace before a migration.
+---
+
+### Configuration inventory — run alongside the asset inventory
+
+`workspace_config_inventory_sdk.py` is a **separate, complementary script**. It does not collect data assets — it collects workspace-level **configuration**. Run it alongside either asset inventory script to get a complete picture of a workspace before a migration.
+
+It covers:
+
+- **Identity** — users, groups, service principals
+- **Compute** — clusters, cluster policies, instance pools, SQL warehouses
+- **Unity Catalog** — external locations, storage credentials, connections (Lakehouse Federation)
+- **Workspace Settings** — all three settings APIs: legacy workspace_conf (37 known keys), V2 feature flags (100+ settings), and typed settings
+- **Platform Resources** — SQL global config, global init scripts, IP access lists, secret scopes (names and key names only — values are never read), managed PAT tokens
+- **SQL Assets** — saved SQL queries, SQL alerts
 
 ---
 
