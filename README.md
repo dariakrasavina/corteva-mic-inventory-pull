@@ -41,7 +41,7 @@ In **Production** workspaces, PAT tokens are often disabled for security reasons
 
 ---
 
-### Configuration inventory — run alongside the asset inventory
+### Workspace Configuration — run alongside the asset inventory
 
 `workspace_config_inventory_sdk.py` is a **separate, complementary script**. It does not collect data assets — it collects workspace-level **configuration**. Run it alongside either asset inventory script to get a complete picture of a workspace before a migration.
 
