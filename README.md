@@ -23,8 +23,8 @@ In **Production** workspaces, PAT tokens are often disabled for security reasons
 
 | Asset | Details |
 |---|---|
-| **Jobs** | Name, creator, schedule, last run time & status |
-| **DLT Pipelines** | Name, creator, trigger type, last run time |
+| **Jobs** | Name, creator, schedule, last run time & status; DAB-managed flag, bundle name, and deployment target† |
+| **DLT Pipelines** | Name, creator, trigger type, last run time; DAB-managed flag and bundle source path† |
 | **Notebooks** | Path, language |
 | **Tables** | Catalog, schema, table name, type, format, owner, created/updated timestamps |
 | **Volumes** | Catalog, schema, volume name, type, storage location, owner |
@@ -36,6 +36,8 @@ In **Production** workspaces, PAT tokens are often disabled for security reasons
 | **Apps** | Name, description, status, URL |
 | **Repos / Git Folders** | Path, Git URL, provider, branch, owner |
 | **Registered ML Models** | Full name, catalog, schema, owner (Unity Catalog + legacy registry) |
+
+† DAB detection fields (`dab_managed`, `dab_bundle`, `dab_target` for jobs; `dab_managed`, `dab_source_path` for pipelines) are available in `workspace_inventory_sdk.py` only.
 
 ---
 
@@ -51,6 +53,21 @@ It covers:
 - **Workspace Settings** — all three settings APIs: legacy workspace_conf (37 known keys), V2 feature flags (100+ settings), and typed settings
 - **Platform Resources** — SQL global config, global init scripts, IP access lists, secret scopes (names and key names only — values are never read), managed PAT tokens
 - **SQL Assets** — saved SQL queries, SQL alerts
+
+---
+
+### Source control — DAB bundle scanner
+
+`azure_devops_dab_scanner.py` connects to **Azure DevOps** and reads Databricks Asset Bundle (DAB) YAML files directly from source control. It does not connect to a Databricks workspace — it reads what each bundle *defines* in code.
+
+Use it to answer: which jobs, notebooks, and DLT pipelines are deployed via DABs, what library versions they depend on, and which workspaces each bundle targets.
+
+| | `azure_devops_dab_scanner.py` |
+|---|---|
+| **Source** | Azure DevOps Git repositories |
+| **Dependencies** | `pip install pyyaml` |
+| **Auth** | Azure DevOps PAT token (or `ADO_TOKEN` env var) |
+| **Recommended for** | Understanding what is managed by DABs, library dependency audit, mapping bundles to deployment environments |
 
 ---
 
@@ -185,8 +202,8 @@ python3 workspace_config_inventory_sdk.py --config workspaces.json
 
 | Asset | Details |
 |---|---|
-| **Jobs** | Name, creator, schedule, last run time & status |
-| **DLT Pipelines** | Name, creator, trigger type, last run time |
+| **Jobs** | Name, creator, schedule, last run time & status; `dab_managed`, `dab_bundle`, `dab_target` (SDK only) |
+| **DLT Pipelines** | Name, creator, trigger type, last run time; `dab_managed`, `dab_source_path` (SDK only) |
 | **Notebooks** | Path, language |
 | **Tables** | Catalog, schema, table name, type, format, owner, created/updated timestamps |
 | **Volumes** | Catalog, schema, volume name, type, storage location, owner |
@@ -212,6 +229,19 @@ python3 workspace_config_inventory_sdk.py --config workspaces.json
 
 > **Security note:** The script lists secret scope names and key names to show what secrets exist. It never reads or exports secret values.
 
+### `azure_devops_dab_scanner.py` — DAB source control scan
+
+Reads DAB YAML files from Azure DevOps source control. Each output file is one `.json` + one `.csv`.
+
+| Output file | Details |
+|---|---|
+| **dab_bundles** | One row per bundle: name, path, environments, workspace hosts, resource counts |
+| **dab_job_tasks** | One row per job task: job name, task key, task type (notebook / pipeline / python / etc.), path or reference, schedule |
+| **dab_pipeline_notebooks** | One row per DLT pipeline notebook or file library: pipeline name, catalog, target schema, notebook path |
+| **dab_apps** | One row per Databricks App defined in a bundle: name, source code path, description |
+| **dab_libraries** | One row per library dependency on a job task cluster: library type (pypi / maven / cran / whl / jar), package name, pinned version |
+| **dab_workspace_targets** | One row per deployment target per bundle: target name, workspace host, mode (development / production), run-as service principal, default flag |
+
 Output per asset type: one `.json` file + one `.csv` file, saved under `output/<workspace-name>/`.
 
 ---
@@ -236,6 +266,16 @@ pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/si
 Install via public PyPI (if accessible):
 ```bash
 pip3 install databricks-sdk
+```
+
+### `azure_devops_dab_scanner.py`
+
+- Python 3.9+
+- `pyyaml`
+- Azure DevOps PAT token with read access to the target repositories
+
+```bash
+pip3 install pyyaml
 ```
 
 ---
@@ -394,6 +434,39 @@ python3 workspace_config_inventory_sdk.py --config workspaces.json --output-dir 
 python3 workspace_config_inventory_sdk.py --profile my-profile --json > out.json
 ```
 
+### `azure_devops_dab_scanner.py` (requires pyyaml)
+
+Scans Azure DevOps repos for DAB YAML files. Does not connect to a Databricks workspace — only needs an ADO PAT token.
+
+```bash
+# Single repo — save all outputs to disk
+python3 azure_devops_dab_scanner.py \
+    --org vs-pioneer --project project0 \
+    --repo Sales-MarketInsightsCloud \
+    --token <ADO-PAT> --save
+
+# All repos in the project
+python3 azure_devops_dab_scanner.py \
+    --org vs-pioneer --project project0 \
+    --token <ADO-PAT> --save
+
+# Save to a custom directory
+python3 azure_devops_dab_scanner.py \
+    --org vs-pioneer --project project0 \
+    --repo Sales-MarketInsightsCloud \
+    --token <ADO-PAT> --save --output-dir /path/to/output
+
+# Print JSON to stdout
+python3 azure_devops_dab_scanner.py \
+    --org vs-pioneer --project project0 \
+    --repo Sales-MarketInsightsCloud \
+    --token <ADO-PAT> --json > out.json
+
+# Use environment variable instead of --token flag
+export ADO_TOKEN=<ADO-PAT>
+python3 azure_devops_dab_scanner.py --org vs-pioneer --project project0 --repo Sales-MarketInsightsCloud --save
+```
+
 ---
 
 ## Output structure
@@ -412,8 +485,21 @@ output/
 │   └── ... (one pair per asset/config type)
 ├── sales-mi-dbw-01-prod/
 │   └── ...
-└── mic-databricks-dev/
-    └── ...
+├── mic-databricks-dev/
+│   └── ...
+└── Sales-MarketInsightsCloud/                   ← from azure_devops_dab_scanner.py
+    ├── Sales-MarketInsightsCloud_dab_bundles.csv
+    ├── Sales-MarketInsightsCloud_dab_bundles.json
+    ├── Sales-MarketInsightsCloud_dab_job_tasks.csv
+    ├── Sales-MarketInsightsCloud_dab_job_tasks.json
+    ├── Sales-MarketInsightsCloud_dab_pipeline_notebooks.csv
+    ├── Sales-MarketInsightsCloud_dab_pipeline_notebooks.json
+    ├── Sales-MarketInsightsCloud_dab_apps.csv
+    ├── Sales-MarketInsightsCloud_dab_apps.json
+    ├── Sales-MarketInsightsCloud_dab_libraries.csv
+    ├── Sales-MarketInsightsCloud_dab_libraries.json
+    ├── Sales-MarketInsightsCloud_dab_workspace_targets.csv
+    └── Sales-MarketInsightsCloud_dab_workspace_targets.json
 ```
 
 ---
@@ -439,6 +525,12 @@ Pass any of these to `--section`:
 **Workspace Settings:** `workspace_conf_legacy` · `workspace_settings_v2` · `workspace_settings_typed` · `sql_global_config` · `global_init_scripts` · `ip_access_lists` · `secret_scopes` · `tokens`
 
 **SQL Assets:** `sql_queries` · `sql_alerts`
+
+### `azure_devops_dab_scanner.py`
+
+The DAB scanner does not use `--section`. It always produces all six output files for each scanned repo:
+
+`dab_bundles` · `dab_job_tasks` · `dab_pipeline_notebooks` · `dab_apps` · `dab_libraries` · `dab_workspace_targets`
 
 ---
 
