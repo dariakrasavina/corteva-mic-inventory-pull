@@ -199,6 +199,10 @@ def collect_jobs(c: InventoryCollector) -> list[dict]:
         else:
             status = "INACTIVE"
 
+        tags = dict(settings.tags) if settings and settings.tags else {}
+        dab_bundle = tags.get("bundle.name", "")
+        dab_target = tags.get("bundle.target", "")
+
         jobs.append({
             "job_id":          jid,
             "name":            settings.name if settings else None,
@@ -210,6 +214,9 @@ def collect_jobs(c: InventoryCollector) -> list[dict]:
             "schedule_paused": paused,
             "last_run_time":   last_run_time,
             "last_run_state":  last_run_state,
+            "dab_managed":     "yes" if dab_bundle else "no",
+            "dab_bundle":      dab_bundle,
+            "dab_target":      dab_target,
         })
     return jobs
 
@@ -241,6 +248,9 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
         else:
             status = "INACTIVE"
 
+        config = dict(getattr(detail, "configuration", None) or {})
+        dab_source = config.get("bundle.sourcePath", "")
+
         pipelines.append({
             "pipeline_id":     pid,
             "name":            p.name,
@@ -251,6 +261,8 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
             "is_triggered":    bool(trigger),
             "last_run_time":   last_event_time,
             "last_event_type": last_event_type,
+            "dab_managed":     "yes" if dab_source else "no",
+            "dab_source_path": dab_source,
         })
     return pipelines
 
