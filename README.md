@@ -71,6 +71,21 @@ Use it to answer: which jobs, notebooks, and DLT pipelines are deployed via DABs
 
 ---
 
+### Activity & lineage — Unity Catalog system tables
+
+`UC_system_tables_scan.py` connects to a Databricks workspace and queries **Unity Catalog system tables** via the SQL Statement Execution API. It does not use workspace API endpoints — all data comes from SQL queries against `system.*` tables.
+
+Use it to answer: what data flows between which tables, which assets are actively used, what compute costs are being incurred, and which jobs/pipelines are deployed via DABs (cross-referenced from audit logs and job tags).
+
+| | `UC_system_tables_scan.py` |
+|---|---|
+| **Source** | Databricks system tables (`system.access`, `system.lakeflow`, `system.billing`, `system.compute`, `system.query`) |
+| **Dependencies** | `pip install databricks-sdk` |
+| **Auth** | PAT token, OAuth U2M (browser login), OAuth M2M (service principal), env vars |
+| **Recommended for** | Migration planning — understanding lineage, active usage, cost footprint, and DAB deployment history |
+
+---
+
 ## Quick Start
 
 Before you run the script, answer one question: **are you a human running this manually, or is this being run automatically by a service principal?**
@@ -242,6 +257,23 @@ Reads DAB YAML files from Azure DevOps source control. Each output file is one `
 | **dab_libraries** | One row per library dependency on a job task cluster: library type (pypi / maven / cran / whl / jar), package name, pinned version |
 | **dab_workspace_targets** | One row per deployment target per bundle: target name, workspace host, mode (development / production), run-as service principal, default flag |
 
+### `UC_system_tables_scan.py` — Unity Catalog system tables
+
+Queries Databricks system tables via a SQL warehouse. Covers activity history and lineage for the configured time window (default: last 90 days). Each output file is one `.json` + one `.csv`, saved under `output/<workspace-name>/system_tables/`.
+
+| Section | System table | Details |
+|---|---|---|
+| **discover** | `system.information_schema.tables` | Lists all available system tables in this workspace — useful before the first run to confirm which tables are enabled |
+| **table_lineage** | `system.access.table_lineage` | Every read/write relationship between tables: source table, target table, entity type (job / notebook / pipeline / dashboard), entity ID, creator, timestamp |
+| **column_lineage** | `system.access.column_lineage` | Column-level lineage: which source columns feed into which target columns, per entity and run |
+| **audit_logs** | `system.access.audit` | Access and lifecycle events: table/job/pipeline/cluster create, delete, run, and bundle deployment actions — filtered to actionable event types |
+| **query_history** | `system.query.history` | All SQL queries executed via SQL warehouses: user, warehouse, duration, bytes scanned, query text |
+| **billing_usage** | `system.billing.usage` | DBU consumption per SKU, workspace, and compute resource — useful for sizing and cost allocation in the new tenant |
+| **cluster_usage** | `system.compute.clusters` | Cluster configuration snapshots: driver/worker types, autoscale settings, Spark version, security mode, policy |
+| **dab_assets** | Job tags + pipeline config + `system.access.audit` | DAB-deployed jobs and pipelines identified via bundle tags on job settings, bundle source path in pipeline config, and `bundleDeployment` / `bundleRun` audit events |
+| **lakeflow_jobs** | `system.lakeflow.jobs` | Job metadata including deployment method (DABs vs manual), run_as identity (service principal vs human), creator, and schedule |
+| **lakeflow_pipelines** | `system.lakeflow.pipelines` | DLT pipeline metadata including deployment method (DABs vs manual), run_as identity, creator, and trigger type |
+
 Output per asset type: one `.json` file + one `.csv` file, saved under `output/<workspace-name>/`.
 
 ---
@@ -268,6 +300,17 @@ Install via public PyPI (if accessible):
 pip3 install databricks-sdk
 ```
 
+### `UC_system_tables_scan.py`
+
+- Python 3.9+
+- `databricks-sdk >= 0.20.0`
+- A running SQL warehouse in the target workspace (auto-detected if not specified with `--warehouse-id`)
+- Unity Catalog system tables must be enabled on the workspace (`system.access`, `system.lakeflow`, `system.billing`, `system.compute`, `system.query`)
+
+```bash
+pip3 install databricks-sdk --index-url https://pypi-proxy.dev.databricks.com/simple
+```
+
 ### `azure_devops_dab_scanner.py`
 
 - Python 3.9+
@@ -288,14 +331,15 @@ Both scripts need credentials to connect to each Databricks workspace. The metho
 
 | Method | Supported by | How it works |
 |---|---|---|
-| **PAT token** | All three scripts | A `dapi...` token generated in your Databricks workspace settings |
-| **`~/.databrickscfg` profile** | `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only | A named profile set up by the Databricks CLI (`databricks configure`) |
-| **Environment variables** | `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only | `DATABRICKS_HOST` + `DATABRICKS_TOKEN` set in your shell |
-| **OAuth U2M** | `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only | Browser-based login via `databricks auth login` — no token needed |
-| **OAuth M2M (service principal)** | `workspace_inventory_sdk.py` and `workspace_config_inventory_sdk.py` only | `DATABRICKS_HOST` + `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` |
+| **PAT token** | All Databricks scripts | A `dapi...` token generated in your Databricks workspace settings |
+| **`~/.databrickscfg` profile** | `workspace_inventory_sdk.py`, `workspace_config_inventory_sdk.py`, `UC_system_tables_scan.py` | A named profile set up by the Databricks CLI (`databricks configure`) |
+| **Environment variables** | `workspace_inventory_sdk.py`, `workspace_config_inventory_sdk.py`, `UC_system_tables_scan.py` | `DATABRICKS_HOST` + `DATABRICKS_TOKEN` set in your shell |
+| **OAuth U2M** | `workspace_inventory_sdk.py`, `workspace_config_inventory_sdk.py`, `UC_system_tables_scan.py` | Browser-based login via `databricks auth login` — no token needed |
+| **OAuth M2M (service principal)** | `workspace_inventory_sdk.py`, `workspace_config_inventory_sdk.py`, `UC_system_tables_scan.py` | `DATABRICKS_HOST` + `DATABRICKS_CLIENT_ID` + `DATABRICKS_CLIENT_SECRET` |
+| **ADO PAT token** | `azure_devops_dab_scanner.py` only | Azure DevOps personal access token with repo read access |
 
-> If you are using **`workspace_inventory_api.py`**, PAT token is your only option.
-> If you are using **`workspace_inventory_sdk.py`** or **`workspace_config_inventory_sdk.py`**, any of the above methods work.
+> `workspace_inventory_api.py` supports PAT token only.
+> `azure_devops_dab_scanner.py` uses an Azure DevOps PAT token — it does not connect to a Databricks workspace.
 
 ### How to generate a PAT token
 
@@ -467,6 +511,32 @@ export ADO_TOKEN=<ADO-PAT>
 python3 azure_devops_dab_scanner.py --org vs-pioneer --project project0 --repo Sales-MarketInsightsCloud --save
 ```
 
+### `UC_system_tables_scan.py` (requires databricks-sdk)
+
+Queries Unity Catalog system tables via a SQL warehouse. Auth options are identical to `workspace_inventory_sdk.py`.
+
+```bash
+# Single workspace — ~/.databrickscfg profile, last 90 days (default)
+python3 UC_system_tables_scan.py --profile my-profile --save
+
+# Single workspace — PAT token, last 30 days
+python3 UC_system_tables_scan.py --host https://adb-xxx.azuredatabricks.net --token dapi... --days 30 --save
+
+# Specify a SQL warehouse (auto-detected if omitted)
+python3 UC_system_tables_scan.py --profile my-profile --warehouse-id abc123def456 --save
+
+# One section only
+python3 UC_system_tables_scan.py --profile my-profile --section table_lineage
+python3 UC_system_tables_scan.py --profile my-profile --section dab_assets
+python3 UC_system_tables_scan.py --profile my-profile --section lakeflow_jobs
+
+# Save to a custom directory
+python3 UC_system_tables_scan.py --profile my-profile --save --output-dir /path/to/output
+
+# Print JSON to stdout
+python3 UC_system_tables_scan.py --profile my-profile --json > out.json
+```
+
 ---
 
 ## Output structure
@@ -474,20 +544,33 @@ python3 azure_devops_dab_scanner.py --org vs-pioneer --project project0 --repo S
 ```
 output/
 ├── sales-mi-dbw-01-dev/
-│   ├── sales-mi-dbw-01-dev_jobs.csv             ← from workspace_inventory_sdk.py
+│   ├── sales-mi-dbw-01-dev_jobs.csv               ← from workspace_inventory_sdk.py
 │   ├── sales-mi-dbw-01-dev_jobs.json
 │   ├── sales-mi-dbw-01-dev_tables.csv
 │   ├── sales-mi-dbw-01-dev_tables.json
-│   ├── sales-mi-dbw-01-dev_users.csv            ← from workspace_config_inventory_sdk.py
+│   ├── sales-mi-dbw-01-dev_users.csv              ← from workspace_config_inventory_sdk.py
 │   ├── sales-mi-dbw-01-dev_users.json
 │   ├── sales-mi-dbw-01-dev_clusters.csv
 │   ├── sales-mi-dbw-01-dev_clusters.json
-│   └── ... (one pair per asset/config type)
+│   ├── ... (one pair per asset/config type)
+│   └── system_tables/                             ← from UC_system_tables_scan.py
+│       ├── sales-mi-dbw-01-dev_system_table_lineage.csv
+│       ├── sales-mi-dbw-01-dev_system_table_lineage.json
+│       ├── sales-mi-dbw-01-dev_system_column_lineage.csv
+│       ├── sales-mi-dbw-01-dev_system_column_lineage.json
+│       ├── sales-mi-dbw-01-dev_system_audit_logs.csv
+│       ├── sales-mi-dbw-01-dev_system_audit_logs.json
+│       ├── sales-mi-dbw-01-dev_system_query_history.csv
+│       ├── sales-mi-dbw-01-dev_system_billing_usage.csv
+│       ├── sales-mi-dbw-01-dev_system_cluster_usage.csv
+│       ├── sales-mi-dbw-01-dev_system_dab_assets.csv
+│       ├── sales-mi-dbw-01-dev_system_lakeflow_jobs.csv
+│       └── sales-mi-dbw-01-dev_system_lakeflow_pipelines.csv
 ├── sales-mi-dbw-01-prod/
 │   └── ...
 ├── mic-databricks-dev/
 │   └── ...
-└── Sales-MarketInsightsCloud/                   ← from azure_devops_dab_scanner.py
+└── Sales-MarketInsightsCloud/                     ← from azure_devops_dab_scanner.py
     ├── Sales-MarketInsightsCloud_dab_bundles.csv
     ├── Sales-MarketInsightsCloud_dab_bundles.json
     ├── Sales-MarketInsightsCloud_dab_job_tasks.csv
@@ -525,6 +608,12 @@ Pass any of these to `--section`:
 **Workspace Settings:** `workspace_conf_legacy` · `workspace_settings_v2` · `workspace_settings_typed` · `sql_global_config` · `global_init_scripts` · `ip_access_lists` · `secret_scopes` · `tokens`
 
 **SQL Assets:** `sql_queries` · `sql_alerts`
+
+### `UC_system_tables_scan.py`
+
+Pass any of these to `--section` (default: all sections):
+
+`discover` · `table_lineage` · `column_lineage` · `audit_logs` · `query_history` · `billing_usage` · `cluster_usage` · `dab_assets` · `lakeflow_jobs` · `lakeflow_pipelines`
 
 ### `azure_devops_dab_scanner.py`
 
