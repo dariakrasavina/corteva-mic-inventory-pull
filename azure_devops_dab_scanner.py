@@ -240,16 +240,17 @@ def extract_job_tasks(bundle: dict) -> list[dict]:
                 continue
             task_key = task.get("task_key", "")
             base: dict = {
-                "repo":        bundle["repo"],
-                "bundle_path": bundle["bundle_path"],
-                "bundle_name": bundle["bundle_name"],
-                "job_key":     job_key,
-                "job_name":    job_name,
-                "schedule":    schedule,
-                "task_key":    task_key,
-                "task_type":   "",
-                "path":        "",
-                "source":      "",
+                "repo":             bundle["repo"],
+                "bundle_path":      bundle["bundle_path"],
+                "bundle_name":      bundle["bundle_name"],
+                "job_key":          job_key,
+                "job_name":         job_name,
+                "schedule":         schedule,
+                "task_key":         task_key,
+                "job_cluster_key":  task.get("job_cluster_key", ""),
+                "task_type":        "",
+                "path":             "",
+                "source":           "",
             }
             if "notebook_task" in task:
                 nb = task["notebook_task"] or {}
@@ -430,6 +431,41 @@ def extract_workspace_targets(bundle: dict) -> list[dict]:
     return rows
 
 
+def extract_job_clusters(bundle: dict) -> list[dict]:
+    """Extract job cluster configurations defined under each job's job_clusters block."""
+    rows: list[dict] = []
+    for job_key, job in (bundle["resources"].get("jobs") or {}).items():
+        if not isinstance(job, dict):
+            continue
+        job_name = job.get("name", job_key)
+        for cluster in (job.get("job_clusters") or []):
+            if not isinstance(cluster, dict):
+                continue
+            cluster_key = cluster.get("job_cluster_key", "")
+            new_cluster = cluster.get("new_cluster") or {}
+            autoscale = new_cluster.get("autoscale") or {}
+            azure_attrs = new_cluster.get("azure_attributes") or {}
+            rows.append({
+                "repo":                bundle["repo"],
+                "bundle_path":         bundle["bundle_path"],
+                "bundle_name":         bundle["bundle_name"],
+                "job_key":             job_key,
+                "job_name":            job_name,
+                "job_cluster_key":     cluster_key,
+                "spark_version":       new_cluster.get("spark_version", ""),
+                "node_type_id":        new_cluster.get("node_type_id", ""),
+                "num_workers":         new_cluster.get("num_workers", ""),
+                "autoscale_min":       autoscale.get("min_workers", ""),
+                "autoscale_max":       autoscale.get("max_workers", ""),
+                "data_security_mode":  new_cluster.get("data_security_mode", ""),
+                "runtime_engine":      new_cluster.get("runtime_engine", ""),
+                "availability":        azure_attrs.get("availability", ""),
+                "spot_bid_max_price":  azure_attrs.get("spot_bid_max_price", ""),
+                "enable_elastic_disk": new_cluster.get("enable_elastic_disk", ""),
+            })
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
@@ -458,12 +494,14 @@ def _print_summary(
     app_rows: list[dict],
     lib_rows: list[dict],
     target_rows: list[dict],
+    cluster_rows: list[dict],
 ) -> None:
     print(f"\n{'═' * 72}", file=sys.stderr)
     print(f"  Summary — {repo}", file=sys.stderr)
     print(f"{'═' * 72}", file=sys.stderr)
     print(f"  Bundles:             {len(bundle_rows)}", file=sys.stderr)
     print(f"  Job tasks:           {len(job_rows)}", file=sys.stderr)
+    print(f"  Job clusters:        {len(cluster_rows)}", file=sys.stderr)
     print(f"  Pipeline notebooks:  {len(pipeline_rows)}", file=sys.stderr)
     print(f"  Apps:                {len(app_rows)}", file=sys.stderr)
     print(f"  Library deps:        {len(lib_rows)}", file=sys.stderr)
@@ -504,6 +542,7 @@ def scan_repo(
 
     bundle_rows:   list[dict] = []
     job_rows:      list[dict] = []
+    cluster_rows:  list[dict] = []
     pipeline_rows: list[dict] = []
     app_rows:      list[dict] = []
     lib_rows:      list[dict] = []
@@ -516,16 +555,18 @@ def scan_repo(
             continue
         bundle_rows.append(extract_bundle_row(bundle))
         job_rows.extend(extract_job_tasks(bundle))
+        cluster_rows.extend(extract_job_clusters(bundle))
         pipeline_rows.extend(extract_pipeline_notebooks(bundle))
         app_rows.extend(extract_apps(bundle))
         lib_rows.extend(extract_libraries(bundle))
         target_rows.extend(extract_workspace_targets(bundle))
 
-    _print_summary(repo, bundle_rows, job_rows, pipeline_rows, app_rows, lib_rows, target_rows)
+    _print_summary(repo, bundle_rows, job_rows, pipeline_rows, app_rows, lib_rows, target_rows, cluster_rows)
 
     results: dict[str, list[dict]] = {
         "dab_bundles":              bundle_rows,
         "dab_job_tasks":            job_rows,
+        "dab_job_clusters":         cluster_rows,
         "dab_pipeline_notebooks":   pipeline_rows,
         "dab_apps":                 app_rows,
         "dab_libraries":            lib_rows,
