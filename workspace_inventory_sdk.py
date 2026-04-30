@@ -228,8 +228,10 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
         pid = p.pipeline_id
 
         detail = c.safe(f"pipelines.get({pid})", lambda pid=pid: c.w.pipelines.get(pipeline_id=pid))
-        continuous = detail.continuous if detail else False
-        trigger = detail.trigger if detail else None
+        spec = getattr(detail, "spec", None) if detail else None
+        spec = spec or detail  # older SDK versions put fields directly on the response
+        continuous = getattr(spec, "continuous", False) or False
+        trigger = getattr(spec, "trigger", None)
 
         events = c.safe(
             f"pipelines.events({pid})",
@@ -248,7 +250,7 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
         else:
             status = "INACTIVE"
 
-        config = dict(getattr(detail, "configuration", None) or {})
+        config = dict(getattr(spec, "configuration", None) or {})
         dab_source = config.get("bundle.sourcePath", "")
 
         pipelines.append({
