@@ -478,7 +478,7 @@ def collect_apps(c: InventoryCollector) -> list[dict]:
         {
             "name":        a.name,
             "description": a.description,
-            "status":      _val(a.status.state) if a.status else None,
+            "status":      _val(getattr(getattr(a, "status", None), "state", None)),
             "url":         a.url,
         }
         for a in apps
