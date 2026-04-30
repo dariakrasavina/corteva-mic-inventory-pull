@@ -43,6 +43,7 @@ Install SDK:  pip3 install databricks-sdk --index-url https://pypi-proxy.dev.dat
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import json
 import os
@@ -233,11 +234,18 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
         continuous = getattr(spec, "continuous", False) or False
         trigger = getattr(spec, "trigger", None)
 
-        events = c.safe(
-            f"pipelines.events({pid})",
-            lambda pid=pid: list(c.w.pipelines.list_pipeline_events(pipeline_id=pid, max_results=5)),
-            default=[],
-        )
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                _fut = _pool.submit(
+                    lambda pid=pid: list(c.w.pipelines.list_pipeline_events(pipeline_id=pid, max_results=5))
+                )
+                events = _fut.result(timeout=30)
+        except concurrent.futures.TimeoutError:
+            _warn(f"pipelines.events({pid}): timed out after 30s — skipping events for this pipeline")
+            events = []
+        except Exception as exc:
+            _warn(f"pipelines.events({pid}): {exc}")
+            events = []
         last_event_time = _fmt_dt(events[0].timestamp) if events else None
         last_event_type = _val(events[0].event_type) if events else None
 
