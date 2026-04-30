@@ -231,44 +231,34 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
                 _fut = _pool.submit(lambda pid=pid: c.w.pipelines.get(pipeline_id=pid))
-                detail = _fut.result(timeout=30)
+                detail = _fut.result(timeout=10)
         except concurrent.futures.TimeoutError:
-            _warn(f"pipelines.get({pid}): timed out after 30s — skipping detail for this pipeline")
+            _warn(f"pipelines.get({pid}): timed out — skipping detail for this pipeline")
             detail = None
         except Exception as exc:
             _warn(f"pipelines.get({pid}): {exc}")
             detail = None
+
         spec = getattr(detail, "spec", None) if detail else None
         spec = spec or detail  # older SDK versions put fields directly on the response
         continuous = getattr(spec, "continuous", False) or False
         trigger = getattr(spec, "trigger", None)
+        config = dict(getattr(spec, "configuration", None) or {})
+        dab_source = config.get("bundle.sourcePath", "")
 
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                _fut = _pool.submit(
-                    lambda pid=pid: list(c.w.pipelines.list_pipeline_events(pipeline_id=pid, max_results=5))
-                )
-                events = _fut.result(timeout=30)
-        except concurrent.futures.TimeoutError:
-            _warn(f"pipelines.events({pid}): timed out after 30s — skipping events for this pipeline")
-            events = []
-        except Exception as exc:
-            _warn(f"pipelines.events({pid}): {exc}")
-            events = []
-        last_event_time = _fmt_dt(events[0].timestamp) if events else None
-        last_event_type = _val(events[0].event_type) if events else None
+        updates = getattr(p, "latest_updates", None) or []
+        last_update = updates[0] if updates else None
+        last_run_time = _fmt_dt(getattr(last_update, "creation_time", None)) if last_update else None
+        last_run_state = _val(getattr(last_update, "state", None)) if last_update else None
 
         if continuous:
             status = "CONTINUOUS"
         elif trigger:
             status = "TRIGGERED"
-        elif last_event_time:
+        elif last_run_time:
             status = "MANUAL (has runs)"
         else:
-            status = "INACTIVE"
-
-        config = dict(getattr(spec, "configuration", None) or {})
-        dab_source = config.get("bundle.sourcePath", "")
+            status = _val(p.state) or "INACTIVE"
 
         pipelines.append({
             "pipeline_id":     pid,
@@ -278,8 +268,8 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
             "status":          status,
             "is_continuous":   bool(continuous),
             "is_triggered":    bool(trigger),
-            "last_run_time":   last_event_time,
-            "last_event_type": last_event_type,
+            "last_run_time":   last_run_time,
+            "last_run_state":  last_run_state,
             "dab_managed":     "yes" if dab_source else "no",
             "dab_source_path": dab_source,
         })
