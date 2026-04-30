@@ -446,6 +446,53 @@ def scan_lakeflow_pipelines(w: WorkspaceClient, warehouse_id: str, days: int) ->
     return _run_query(w, warehouse_id, sql, "lakeflow_pipelines")
 
 
+def scan_warehouse_usage(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
+    """
+    SQL warehouse configuration and usage snapshots from system.compute.warehouses.
+    Useful for understanding warehouse sizing, auto-stop settings, and channel versions
+    when replicating compute configuration in the new tenant.
+    """
+    sql = f"""
+        SELECT *
+        FROM system.compute.warehouses
+        WHERE change_time >= dateadd(DAY, -{days}, current_timestamp())
+        ORDER BY change_time DESC
+        LIMIT 10000
+    """
+    return _run_query(w, warehouse_id, sql, "warehouse_usage")
+
+
+def scan_serving_endpoint_usage(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
+    """
+    ML serving endpoint usage from system.serving.endpoint_usage.
+    Shows request volume, latency, and token usage per endpoint over time —
+    useful for understanding which endpoints are actively used and their traffic patterns.
+    """
+    sql = f"""
+        SELECT *
+        FROM system.serving.endpoint_usage
+        WHERE timestamp >= dateadd(DAY, -{days}, current_timestamp())
+        ORDER BY timestamp DESC
+        LIMIT 10000
+    """
+    return _run_query(w, warehouse_id, sql, "serving_endpoint_usage")
+
+
+def scan_serving_served_entities(w: WorkspaceClient, warehouse_id: str, days: int) -> list[dict]:
+    """
+    ML served entities from system.serving.served_entities.
+    Shows which models or functions are deployed behind each serving endpoint,
+    including the entity name, version, and workload size.
+    """
+    sql = """
+        SELECT *
+        FROM system.serving.served_entities
+        ORDER BY endpoint_name, entity_name
+        LIMIT 10000
+    """
+    return _run_query(w, warehouse_id, sql, "serving_served_entities")
+
+
 # ---------------------------------------------------------------------------
 # Section registry
 # ---------------------------------------------------------------------------
@@ -458,9 +505,12 @@ SECTIONS = [
     ("query_history",      "Query History",                    scan_query_history),
     ("billing_usage",      "Billing & DBU Usage",              scan_billing_usage),
     ("cluster_usage",      "Cluster Usage",                    scan_cluster_usage),
-    ("dab_assets",         "DAB-Deployed Assets",              scan_dab_assets),
-    ("lakeflow_jobs",      "Jobs (deployment & run_as)",       scan_lakeflow_jobs),
-    ("lakeflow_pipelines", "Pipelines (deployment & run_as)",  scan_lakeflow_pipelines),
+    ("dab_assets",               "DAB-Deployed Assets",              scan_dab_assets),
+    ("lakeflow_jobs",            "Jobs (deployment & run_as)",       scan_lakeflow_jobs),
+    ("lakeflow_pipelines",       "Pipelines (deployment & run_as)",  scan_lakeflow_pipelines),
+    ("warehouse_usage",          "SQL Warehouse Usage",              scan_warehouse_usage),
+    ("serving_endpoint_usage",   "Serving Endpoint Usage (ML)",      scan_serving_endpoint_usage),
+    ("serving_served_entities",  "Serving Served Entities (ML)",     scan_serving_served_entities),
 ]
 
 SECTION_KEYS = [k for k, _, _ in SECTIONS]
