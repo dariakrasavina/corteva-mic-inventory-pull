@@ -228,7 +228,16 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
     for p in raw:
         pid = p.pipeline_id
 
-        detail = c.safe(f"pipelines.get({pid})", lambda pid=pid: c.w.pipelines.get(pipeline_id=pid))
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+                _fut = _pool.submit(lambda pid=pid: c.w.pipelines.get(pipeline_id=pid))
+                detail = _fut.result(timeout=30)
+        except concurrent.futures.TimeoutError:
+            _warn(f"pipelines.get({pid}): timed out after 30s — skipping detail for this pipeline")
+            detail = None
+        except Exception as exc:
+            _warn(f"pipelines.get({pid}): {exc}")
+            detail = None
         spec = getattr(detail, "spec", None) if detail else None
         spec = spec or detail  # older SDK versions put fields directly on the response
         continuous = getattr(spec, "continuous", False) or False
