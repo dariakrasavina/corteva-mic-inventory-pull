@@ -228,16 +228,17 @@ def collect_pipelines(c: InventoryCollector) -> list[dict]:
     for p in raw:
         pid = p.pipeline_id
 
+        _pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
-                _fut = _pool.submit(lambda pid=pid: c.w.pipelines.get(pipeline_id=pid))
-                detail = _fut.result(timeout=10)
+            detail = _pool.submit(lambda pid=pid: c.w.pipelines.get(pipeline_id=pid)).result(timeout=10)
         except concurrent.futures.TimeoutError:
             _warn(f"pipelines.get({pid}): timed out — skipping detail for this pipeline")
             detail = None
         except Exception as exc:
             _warn(f"pipelines.get({pid}): {exc}")
             detail = None
+        finally:
+            _pool.shutdown(wait=False)
 
         spec = getattr(detail, "spec", None) if detail else None
         spec = spec or detail  # older SDK versions put fields directly on the response
