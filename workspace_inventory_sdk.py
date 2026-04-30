@@ -59,18 +59,16 @@ from databricks.sdk.errors import NotFound, PermissionDenied, ResourceDoesNotExi
 # ---------------------------------------------------------------------------
 
 
-_HTTP_TIMEOUT = 60  # seconds — prevents hanging on slow/firewalled endpoints
-
-
 def _make_client(host: str = "", token: str = "", profile: str = "") -> WorkspaceClient:
     """Create a WorkspaceClient using the best available auth method."""
     if profile:
-        return WorkspaceClient(profile=profile, http_timeout_seconds=_HTTP_TIMEOUT)
+        return WorkspaceClient(profile=profile)
     if host and token:
-        return WorkspaceClient(host=host, token=token, http_timeout_seconds=_HTTP_TIMEOUT)
+        return WorkspaceClient(host=host, token=token)
     if host:
-        return WorkspaceClient(host=host, http_timeout_seconds=_HTTP_TIMEOUT)
-    return WorkspaceClient(http_timeout_seconds=_HTTP_TIMEOUT)
+        # SDK auto-discovers auth from env vars or default profile
+        return WorkspaceClient(host=host)
+    return WorkspaceClient()  # fully auto-discover
 
 
 # ---------------------------------------------------------------------------
