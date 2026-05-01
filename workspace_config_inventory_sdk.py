@@ -592,16 +592,16 @@ def _save_files(key: str, items: list[dict], prefix: str, output_dir: str) -> No
     os.makedirs(output_dir, exist_ok=True)
     base = os.path.join(output_dir, f"{prefix}_{key}")
 
-    with open(f"{base}.json", "w") as f:
-        json.dump(items, f, indent=2, default=str)
+    with open(f"{base}.json", "w", encoding="utf-8") as f:
+        json.dump(items, f, indent=2, default=str, ensure_ascii=False)
 
     if items:
-        with open(f"{base}.csv", "w", newline="") as f:
+        with open(f"{base}.csv", "w", newline="", encoding="utf-8-sig") as f:
             w = csv.DictWriter(f, fieldnames=list(items[0].keys()), extrasaction="ignore")
             w.writeheader()
             w.writerows(items)
     else:
-        open(f"{base}.csv", "w").close()
+        open(f"{base}.csv", "w", encoding="utf-8-sig").close()
 
 
 def _print_summary(
