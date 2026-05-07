@@ -21,6 +21,8 @@ Install:  pip install databricks-sdk
     --catalog NAME                  Limit to one catalog
     --schema NAME                   Limit to one schema (requires --catalog)
     --extension EXT                 Keep only files with this extension (e.g. pkl)
+    --managed-only                  Skip EXTERNAL volumes (raw data-lake mounts).
+                                    Recommended for ML artifact use cases.
     (no filters)                    Walks every volume the token can see
 
 ─── Examples ─────────────────────────────────────────────────────────────────
@@ -99,11 +101,19 @@ def _safe(label: str, fn: Any, default: Any = None) -> Any:
 # ---------------------------------------------------------------------------
 
 
+def _volume_type(v: Any) -> str:
+    vt = getattr(v, "volume_type", None)
+    if vt is None:
+        return ""
+    return getattr(vt, "value", str(vt)).upper()
+
+
 def _list_target_volumes(
     w: WorkspaceClient,
     catalog: str,
     schema: str,
     volume_full_name: str,
+    managed_only: bool,
 ) -> list:
     """Resolve --volume / --catalog / --schema flags into the set of volumes to walk."""
     if volume_full_name:
@@ -111,7 +121,12 @@ def _list_target_volumes(
             f"volumes.read({volume_full_name})",
             lambda: w.volumes.read(name=volume_full_name),
         )
-        return [v] if v else []
+        if not v:
+            return []
+        if managed_only and _volume_type(v) != "MANAGED":
+            print(f"    [SKIP] {volume_full_name} is {_volume_type(v)} (managed-only mode)", file=sys.stderr)
+            return []
+        return [v]
 
     if catalog:
         catalogs = [catalog]
@@ -137,6 +152,13 @@ def _list_target_volumes(
                 default=[],
             )
             volumes.extend(rows)
+
+    if managed_only:
+        before = len(volumes)
+        volumes = [v for v in volumes if _volume_type(v) == "MANAGED"]
+        skipped = before - len(volumes)
+        if skipped:
+            print(f"  [INFO] managed-only: skipping {skipped} EXTERNAL volume(s)", file=sys.stderr)
     return volumes
 
 
@@ -182,8 +204,9 @@ def collect(
     schema: str,
     volume_full_name: str,
     ext_filter: str,
+    managed_only: bool,
 ) -> list[dict]:
-    volumes = _list_target_volumes(w, catalog, schema, volume_full_name)
+    volumes = _list_target_volumes(w, catalog, schema, volume_full_name, managed_only)
     print(f"  Walking {len(volumes)} volume(s)...", file=sys.stderr)
     files: list[dict] = []
     for v in volumes:
@@ -245,6 +268,7 @@ def run(name: str, w: WorkspaceClient, args: argparse.Namespace) -> list[dict]:
         args.schema,
         args.volume,
         (args.extension or "").lower(),
+        args.managed_only,
     )
     _print_summary(name, files)
     if args.save or args.config:
@@ -271,6 +295,8 @@ def main() -> None:
     parser.add_argument("--schema",     default="", help="Limit to one schema (requires --catalog)")
     parser.add_argument("--volume",     default="", help="Single volume full name: catalog.schema.name")
     parser.add_argument("--extension",  default="", help="Filter by file extension (e.g. pkl)")
+    parser.add_argument("--managed-only", action="store_true",
+                        help="Only walk MANAGED volumes (skip EXTERNAL — typically raw data lakes)")
     parser.add_argument("--save",       action="store_true", help="Write CSV+JSON to disk")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR,
                         help=f"Output root (default: {DEFAULT_OUTPUT_DIR})")
