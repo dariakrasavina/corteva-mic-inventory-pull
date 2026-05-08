@@ -19,12 +19,15 @@ Install:  pip install databricks-sdk
 EXTERNAL volumes are always skipped — they're typically raw data-lake mounts
 with millions of files, and ML artifacts only live in MANAGED volumes.
 
+The catalog defaults to `mic_prod` (the Corteva MIC production catalog).
+Pass `--catalog OTHER` to override.
+
 ─── Scope filters (combine any) ──────────────────────────────────────────────
     --volume CATALOG.SCHEMA.NAME    Single volume (fastest)
-    --catalog NAME                  Limit to one catalog
-    --schema NAME                   Limit to one schema (requires --catalog)
+    --catalog NAME                  Limit to one catalog (default: mic_prod)
+    --schema NAME                   Limit to one schema (within --catalog)
     --extension EXT                 Keep only files with this extension (e.g. pkl)
-    (no filters)                    Walks every MANAGED volume the token can see
+    (no filters)                    Walks every MANAGED volume in mic_prod
 
 ─── Hang protection ──────────────────────────────────────────────────────────
     --list-timeout SEC      Per-directory listing timeout (default 60s).
@@ -37,18 +40,21 @@ with millions of files, and ML artifacts only live in MANAGED volumes.
                             captured is kept) and the next volume starts.
 
 ─── Examples ─────────────────────────────────────────────────────────────────
-    # Just the .pkl artifacts in one volume
+    # All MANAGED volumes in mic_prod, .pkl artifacts only
+    python volume_artifacts_inventory.py --profile mic-prod \\
+        --extension pkl --save
+
+    # One specific schema in mic_prod
+    python volume_artifacts_inventory.py --profile mic-prod \\
+        --schema gold_seed_forecasting --save
+
+    # One specific volume (catalog can be anything via the full name)
     python volume_artifacts_inventory.py --profile mic-prod \\
         --volume mic_prod.gold_seed_forecasting.artifacts \\
         --extension pkl --save
 
-    # Every file in every volume of one schema
-    python volume_artifacts_inventory.py --profile mic-prod \\
-        --catalog mic_prod --schema gold_seed_forecasting --save
-
-    # Multi-workspace via config
-    python volume_artifacts_inventory.py --config workspaces.json \\
-        --catalog mic_prod --extension pkl
+    # Multi-workspace via config (still defaults to mic_prod everywhere)
+    python volume_artifacts_inventory.py --config workspaces.json --extension pkl
 
 ─── workspaces.json format ───────────────────────────────────────────────────
     [
@@ -365,8 +371,10 @@ def main() -> None:
     parser.add_argument("--host",       default=os.environ.get("DATABRICKS_HOST", ""))
     parser.add_argument("--token",      default=os.environ.get("DATABRICKS_TOKEN", ""))
     parser.add_argument("--profile",    default="")
-    parser.add_argument("--catalog",    default="", help="Limit to one catalog")
-    parser.add_argument("--schema",     default="", help="Limit to one schema (requires --catalog)")
+    parser.add_argument("--catalog",    default="mic_prod",
+                        help="Catalog to scan (default: mic_prod). Pass an empty string "
+                             "(--catalog '') to walk all catalogs.")
+    parser.add_argument("--schema",     default="", help="Limit to one schema within --catalog")
     parser.add_argument("--volume",     default="", help="Single volume full name: catalog.schema.name")
     parser.add_argument("--extension",  default="", help="Filter by file extension (e.g. pkl)")
     parser.add_argument("--list-timeout", type=float, default=DEFAULT_LIST_TIMEOUT_SEC,
