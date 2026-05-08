@@ -16,14 +16,25 @@ Install:  pip install databricks-sdk
     CLI profile:  --profile my-profile        (reads ~/.databrickscfg)
     Env vars:     DATABRICKS_HOST + DATABRICKS_TOKEN
 
+EXTERNAL volumes are always skipped — they're typically raw data-lake mounts
+with millions of files, and ML artifacts only live in MANAGED volumes.
+
 ─── Scope filters (combine any) ──────────────────────────────────────────────
     --volume CATALOG.SCHEMA.NAME    Single volume (fastest)
     --catalog NAME                  Limit to one catalog
     --schema NAME                   Limit to one schema (requires --catalog)
     --extension EXT                 Keep only files with this extension (e.g. pkl)
-    --managed-only                  Skip EXTERNAL volumes (raw data-lake mounts).
-                                    Recommended for ML artifact use cases.
-    (no filters)                    Walks every volume the token can see
+    (no filters)                    Walks every MANAGED volume the token can see
+
+─── Hang protection ──────────────────────────────────────────────────────────
+    --list-timeout SEC      Per-directory listing timeout (default 60s).
+                            Wraps `list(iterator)` materialization, not the
+                            bare SDK call — necessary because
+                            files.list_directory_contents() returns a paginating
+                            generator and a timeout on the call alone is a no-op.
+    --volume-timeout SEC    Cumulative budget per volume (default 600s). Once
+                            spent, the volume is abandoned (whatever was
+                            captured is kept) and the next volume starts.
 
 ─── Examples ─────────────────────────────────────────────────────────────────
     # Just the .pkl artifacts in one volume
@@ -49,10 +60,12 @@ Install:  pip install databricks-sdk
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import csv
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -61,6 +74,12 @@ from databricks.sdk.errors import NotFound, PermissionDenied, ResourceDoesNotExi
 
 
 DEFAULT_OUTPUT_DIR = os.path.expanduser("~/corteva-mic-workspace-assets/output")
+DEFAULT_LIST_TIMEOUT_SEC = 60         # wall-clock budget per directory listing
+DEFAULT_VOLUME_TIMEOUT_SEC = 600      # cumulative wall-clock budget per volume
+
+
+class _VolumeBudgetExceeded(Exception):
+    """Raised inside _walk when the per-volume time budget is spent."""
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +132,12 @@ def _list_target_volumes(
     catalog: str,
     schema: str,
     volume_full_name: str,
-    managed_only: bool,
 ) -> list:
-    """Resolve --volume / --catalog / --schema flags into the set of volumes to walk."""
+    """Resolve --volume / --catalog / --schema flags into the set of volumes to walk.
+
+    EXTERNAL volumes are always excluded — they're typically raw data-lake mounts
+    that don't hold ML artifacts and can have millions of files.
+    """
     if volume_full_name:
         v = _safe(
             f"volumes.read({volume_full_name})",
@@ -123,8 +145,12 @@ def _list_target_volumes(
         )
         if not v:
             return []
-        if managed_only and _volume_type(v) != "MANAGED":
-            print(f"    [SKIP] {volume_full_name} is {_volume_type(v)} (managed-only mode)", file=sys.stderr)
+        if _volume_type(v) != "MANAGED":
+            print(
+                f"    [SKIP] {volume_full_name} is {_volume_type(v)} — "
+                f"EXTERNAL volumes are not walked",
+                file=sys.stderr,
+            )
             return []
         return [v]
 
@@ -153,13 +179,40 @@ def _list_target_volumes(
             )
             volumes.extend(rows)
 
-    if managed_only:
-        before = len(volumes)
-        volumes = [v for v in volumes if _volume_type(v) == "MANAGED"]
-        skipped = before - len(volumes)
-        if skipped:
-            print(f"  [INFO] managed-only: skipping {skipped} EXTERNAL volume(s)", file=sys.stderr)
+    before = len(volumes)
+    volumes = [v for v in volumes if _volume_type(v) == "MANAGED"]
+    skipped = before - len(volumes)
+    if skipped:
+        print(f"  [INFO] excluded {skipped} EXTERNAL volume(s)", file=sys.stderr)
     return volumes
+
+
+def _list_with_timeout(w: WorkspaceClient, path: str, timeout: float) -> list | None:
+    """Materialize files.list_directory_contents with a wall-clock timeout.
+
+    Wrapping `list(iterator)` (not just the SDK call) is critical: the SDK
+    method returns a paginating generator, so the actual API work happens
+    during iteration. A timeout on the bare call would fire on a no-op.
+
+    Returns the entries list on success, or None on timeout.
+    """
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(
+            lambda: list(w.files.list_directory_contents(directory_path=path))
+        ).result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        return None
+    except PermissionDenied:
+        print(f"    [WARN] permission denied: {path}", file=sys.stderr)
+        return []
+    except (NotFound, ResourceDoesNotExist):
+        return []
+    except Exception as exc:  # noqa: BLE001
+        print(f"    [WARN] files.list_directory_contents({path}): {exc}", file=sys.stderr)
+        return []
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _walk(
@@ -168,18 +221,26 @@ def _walk(
     path: str,
     ext_filter: str,
     sink: list[dict],
+    list_timeout: float,
+    volume_deadline: float,
 ) -> None:
-    entries = _safe(
-        f"files.list_directory_contents({path})",
-        lambda: list(w.files.list_directory_contents(directory_path=path)),
-        default=[],
-    )
+    if time.monotonic() > volume_deadline:
+        raise _VolumeBudgetExceeded(path)
+
+    print(f"    listing {path}", file=sys.stderr)
+    entries = _list_with_timeout(w, path, list_timeout)
+    if entries is None:
+        print(f"    [TIMEOUT] {path} (>{list_timeout}s) — skipped", file=sys.stderr)
+        return
+
     for e in entries:
+        if time.monotonic() > volume_deadline:
+            raise _VolumeBudgetExceeded(path)
         epath = e.path or ""
         ename = e.name or os.path.basename(epath)
         if getattr(e, "is_directory", False):
             if epath:
-                _walk(w, v, epath, ext_filter, sink)
+                _walk(w, v, epath, ext_filter, sink, list_timeout, volume_deadline)
             continue
         ext = os.path.splitext(ename)[1].lstrip(".").lower()
         if ext_filter and ext != ext_filter:
@@ -204,15 +265,27 @@ def collect(
     schema: str,
     volume_full_name: str,
     ext_filter: str,
-    managed_only: bool,
+    list_timeout: float,
+    volume_timeout: float,
 ) -> list[dict]:
-    volumes = _list_target_volumes(w, catalog, schema, volume_full_name, managed_only)
-    print(f"  Walking {len(volumes)} volume(s)...", file=sys.stderr)
+    volumes = _list_target_volumes(w, catalog, schema, volume_full_name)
+    print(f"  Walking {len(volumes)} volume(s)  "
+          f"(per-listing timeout: {list_timeout:.0f}s, per-volume budget: {volume_timeout:.0f}s)",
+          file=sys.stderr)
     files: list[dict] = []
     for v in volumes:
         root = f"/Volumes/{v.catalog_name}/{v.schema_name}/{v.name}"
-        print(f"    {root}", file=sys.stderr)
-        _walk(w, v, root, ext_filter, files)
+        print(f"  ━━ {root}", file=sys.stderr)
+        deadline = time.monotonic() + volume_timeout
+        before = len(files)
+        try:
+            _walk(w, v, root, ext_filter, files, list_timeout, deadline)
+        except _VolumeBudgetExceeded as exc:
+            print(
+                f"  [BUDGET] {root} — exceeded {volume_timeout:.0f}s, abandoning at {exc} "
+                f"(captured {len(files) - before} files before bailout)",
+                file=sys.stderr,
+            )
     return files
 
 
@@ -268,7 +341,8 @@ def run(name: str, w: WorkspaceClient, args: argparse.Namespace) -> list[dict]:
         args.schema,
         args.volume,
         (args.extension or "").lower(),
-        args.managed_only,
+        args.list_timeout,
+        args.volume_timeout,
     )
     _print_summary(name, files)
     if args.save or args.config:
@@ -295,8 +369,14 @@ def main() -> None:
     parser.add_argument("--schema",     default="", help="Limit to one schema (requires --catalog)")
     parser.add_argument("--volume",     default="", help="Single volume full name: catalog.schema.name")
     parser.add_argument("--extension",  default="", help="Filter by file extension (e.g. pkl)")
-    parser.add_argument("--managed-only", action="store_true",
-                        help="Only walk MANAGED volumes (skip EXTERNAL — typically raw data lakes)")
+    parser.add_argument("--list-timeout", type=float, default=DEFAULT_LIST_TIMEOUT_SEC,
+                        help=f"Wall-clock timeout per directory listing in seconds "
+                             f"(default: {DEFAULT_LIST_TIMEOUT_SEC}). "
+                             f"On timeout, that directory is skipped and the walk continues.")
+    parser.add_argument("--volume-timeout", type=float, default=DEFAULT_VOLUME_TIMEOUT_SEC,
+                        help=f"Cumulative time budget per volume in seconds "
+                             f"(default: {DEFAULT_VOLUME_TIMEOUT_SEC}). "
+                             f"Once spent, the entire volume is abandoned and the next one starts.")
     parser.add_argument("--save",       action="store_true", help="Write CSV+JSON to disk")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR,
                         help=f"Output root (default: {DEFAULT_OUTPUT_DIR})")
