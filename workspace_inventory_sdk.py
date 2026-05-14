@@ -32,6 +32,21 @@ Install SDK:  pip3 install databricks-sdk --index-url https://pypi-proxy.dev.dat
     --section KEY       Collect one section only
     --json              Print JSON to stdout (single workspace only)
 
+─── Volume-walk settings (used by the `volume_files` section) ────────────────
+    EXTERNAL volumes are ALWAYS excluded — both the `volumes` (metadata) and
+    `volume_files` (recursive) collectors only emit MANAGED volumes. This
+    mirrors volume_artifacts_inventory.py.
+
+    --volume-files-catalog NAME   Catalog to walk for `volume_files`
+                                  (default: mic_prod). Pass '' to walk all
+                                  catalogs the token can see.
+    --list-timeout SEC            Per-directory listing timeout (default 60s).
+                                  Wraps list(iterator) materialization, not
+                                  the bare SDK call.
+    --volume-timeout SEC          Cumulative budget per volume (default 600s).
+                                  Once spent, the volume is abandoned and
+                                  the next one starts.
+
 ─── workspaces.json format — supports token or profile per workspace ─────────
     [
       {"name": "dev",  "host": "https://adb-xxx.net", "token": "dapi..."},
@@ -48,11 +63,22 @@ import csv
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import NotFound, PermissionDenied, ResourceDoesNotExist
+
+
+# Defaults for the volume_files collector — match volume_artifacts_inventory.py
+DEFAULT_VOLUME_FILES_CATALOG = "mic_prod"
+DEFAULT_LIST_TIMEOUT_SEC = 60
+DEFAULT_VOLUME_TIMEOUT_SEC = 600
+
+
+class _VolumeBudgetExceeded(Exception):
+    """Raised inside the volume_files walk when per-volume time budget is spent."""
 
 
 # ---------------------------------------------------------------------------
@@ -78,8 +104,19 @@ def _make_client(host: str = "", token: str = "", profile: str = "") -> Workspac
 
 
 class InventoryCollector:
-    def __init__(self, w: WorkspaceClient) -> None:
+    def __init__(
+        self,
+        w: WorkspaceClient,
+        volume_files_catalog: str = DEFAULT_VOLUME_FILES_CATALOG,
+        list_timeout: float = DEFAULT_LIST_TIMEOUT_SEC,
+        volume_timeout: float = DEFAULT_VOLUME_TIMEOUT_SEC,
+    ) -> None:
         self.w = w
+        # Volume-walk config (used by collect_volume_files; EXTERNAL volumes
+        # are always excluded — no flag).
+        self.volume_files_catalog = volume_files_catalog
+        self.list_timeout = list_timeout
+        self.volume_timeout = volume_timeout
         self._perm_errors: list[str] = []
         self._other_errors: list[str] = []
 
@@ -153,6 +190,34 @@ def _val(v: Any) -> Any:
     if hasattr(v, "value"):
         return v.value
     return v
+
+
+def _list_dir_with_timeout(w: WorkspaceClient, path: str, timeout: float) -> list | None:
+    """Materialize files.list_directory_contents with a wall-clock timeout.
+
+    Wrapping `list(iterator)` (not the bare SDK call) is critical: the SDK
+    method returns a paginating generator, so the actual API work happens
+    during iteration. A timeout on the bare call would fire on a no-op.
+
+    Returns the entries list on success, None on timeout, [] on other errors.
+    """
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    try:
+        return pool.submit(
+            lambda: list(w.files.list_directory_contents(directory_path=path))
+        ).result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        return None
+    except PermissionDenied:
+        _warn(f"permission denied: {path}")
+        return []
+    except (NotFound, ResourceDoesNotExist):
+        return []
+    except Exception as exc:  # noqa: BLE001
+        _warn(f"files.list_directory_contents({path}): {exc}")
+        return []
+    finally:
+        pool.shutdown(wait=False)
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +393,13 @@ def collect_tables(c: InventoryCollector) -> list[dict]:
 
 
 def collect_volumes(c: InventoryCollector) -> list[dict]:
+    """List MANAGED UC volume metadata across all catalogs the token can see.
+
+    EXTERNAL volumes are always excluded — same scoping as the volume_files
+    collector and the standalone volume_artifacts_inventory.py script.
+    """
     volumes: list[dict] = []
+    skipped_external = 0
     for cat, schema in c._uc_iter_schemas():
         rows = c.safe(
             f"volumes.list({cat}.{schema})",
@@ -336,6 +407,9 @@ def collect_volumes(c: InventoryCollector) -> list[dict]:
             default=[],
         )
         for v in rows:
+            if _val(v.volume_type) != "MANAGED":
+                skipped_external += 1
+                continue
             volumes.append({
                 "catalog_name":     v.catalog_name,
                 "schema_name":      v.schema_name,
@@ -350,7 +424,104 @@ def collect_volumes(c: InventoryCollector) -> list[dict]:
                 "updated_by":       v.updated_by,
                 "comment":          v.comment,
             })
+    if skipped_external:
+        _warn(f"excluded {skipped_external} EXTERNAL volume(s)")
     return volumes
+
+
+def collect_volume_files(c: InventoryCollector) -> list[dict]:
+    """Recursively list every file inside MANAGED UC volumes.
+
+    Mirrors volume_artifacts_inventory.py:
+      - EXTERNAL volumes are always excluded (raw data-lake mounts that
+        don't hold ML artifacts and can have millions of files).
+      - Catalog scope defaults to `c.volume_files_catalog` (mic_prod).
+        Pass an empty string via --volume-files-catalog '' to walk all.
+      - Per-listing timeout (c.list_timeout, default 60s) wraps the
+        list(iterator) materialization, since the SDK call returns a
+        paginating generator and a timeout on the bare call is a no-op.
+      - Per-volume cumulative budget (c.volume_timeout, default 600s) —
+        once spent, the volume is abandoned and the next one starts.
+      - Each directory is logged before listing so a hang is visible.
+    """
+    files: list[dict] = []
+    skipped_external = 0
+
+    def walk(v: Any, path: str, deadline: float) -> None:
+        if time.monotonic() > deadline:
+            raise _VolumeBudgetExceeded(path)
+        print(f"    listing {path}", file=sys.stderr)
+        entries = _list_dir_with_timeout(c.w, path, c.list_timeout)
+        if entries is None:
+            print(
+                f"    [TIMEOUT] {path} (>{c.list_timeout:.0f}s) — skipped",
+                file=sys.stderr,
+            )
+            return
+        for entry in entries:
+            if time.monotonic() > deadline:
+                raise _VolumeBudgetExceeded(path)
+            entry_path = entry.path or ""
+            entry_name = entry.name or os.path.basename(entry_path)
+            if getattr(entry, "is_directory", False):
+                if entry_path:
+                    walk(v, entry_path, deadline)
+                continue
+            mod_ms = getattr(entry, "last_modified", None) or getattr(entry, "modification_time", None)
+            ext = os.path.splitext(entry_name)[1].lstrip(".").lower()
+            files.append({
+                "catalog_name":      v.catalog_name,
+                "schema_name":       v.schema_name,
+                "volume_name":       v.name,
+                "full_volume_name":  v.full_name,
+                "volume_type":       _val(v.volume_type),
+                "file_path":         entry_path,
+                "file_name":         entry_name,
+                "file_extension":    ext,
+                "file_size_bytes":   getattr(entry, "file_size", None),
+                "modification_time": _fmt_ts(mod_ms),
+            })
+
+    # Resolve catalog scope: explicit single catalog or all-visible if blank.
+    if c.volume_files_catalog:
+        catalogs = [c.volume_files_catalog]
+    else:
+        cats = c.safe("catalogs.list", lambda: list(c.w.catalogs.list()), default=[])
+        catalogs = [cat.name for cat in cats]
+
+    for cat in catalogs:
+        schemas = c.safe(
+            f"schemas.list({cat})",
+            lambda cn=cat: list(c.w.schemas.list(catalog_name=cn)),
+            default=[],
+        )
+        for sch in schemas:
+            sn = sch.name
+            vols = c.safe(
+                f"volumes.list({cat}.{sn})",
+                lambda cn=cat, ssn=sn: list(c.w.volumes.list(catalog_name=cn, schema_name=ssn)),
+                default=[],
+            )
+            for v in vols:
+                if _val(v.volume_type) != "MANAGED":
+                    skipped_external += 1
+                    continue
+                root = f"/Volumes/{v.catalog_name}/{v.schema_name}/{v.name}"
+                print(f"  ━━ {root}", file=sys.stderr)
+                deadline = time.monotonic() + c.volume_timeout
+                before = len(files)
+                try:
+                    walk(v, root, deadline)
+                except _VolumeBudgetExceeded as exc:
+                    print(
+                        f"  [BUDGET] {root} — exceeded {c.volume_timeout:.0f}s, "
+                        f"abandoning at {exc} (captured {len(files) - before} files before bailout)",
+                        file=sys.stderr,
+                    )
+
+    if skipped_external:
+        _warn(f"excluded {skipped_external} EXTERNAL volume(s)")
+    return files
 
 
 def collect_functions(c: InventoryCollector) -> list[dict]:
@@ -602,24 +773,148 @@ def collect_registered_models(c: InventoryCollector) -> list[dict]:
     return models
 
 
+def collect_model_versions(c: InventoryCollector) -> list[dict]:
+    """List every version of every registered model — UC and legacy workspace registry.
+
+    UC versions carry aliases (Production/Champion/etc.); legacy versions carry stages.
+    """
+    versions: list[dict] = []
+
+    # ── UC model versions ────────────────────────────────────────────────────
+    uc_models = c.safe(
+        "registered_models.list (UC)",
+        lambda: list(c.w.registered_models.list()),
+        default=[],
+    )
+    for m in uc_models:
+        full_name = m.full_name
+        rows = c.safe(
+            f"model_versions.list({full_name})",
+            lambda fn=full_name: list(c.w.model_versions.list(full_name=fn)),
+            default=[],
+        )
+        for v in rows:
+            alias_names = [
+                getattr(a, "alias_name", None) or getattr(a, "name", None)
+                for a in (getattr(v, "aliases", None) or [])
+            ]
+            versions.append({
+                "type":         "unity_catalog",
+                "full_name":    full_name,
+                "model_name":   m.name,
+                "version":      getattr(v, "version", None),
+                "aliases":      ", ".join(a for a in alias_names if a),
+                "stage":        None,
+                "status":       _val(getattr(v, "status", None)),
+                "source":       getattr(v, "source", None),
+                "run_id":       getattr(v, "run_id", None),
+                "created_at":   _fmt_ts(getattr(v, "created_at", None)),
+                "created_by":   getattr(v, "created_by", None),
+                "updated_at":   _fmt_ts(getattr(v, "updated_at", None)),
+                "comment":      getattr(v, "comment", None),
+            })
+
+    # ── Legacy workspace registry versions ───────────────────────────────────
+    legacy = c.safe(
+        "model_registry.list (legacy)",
+        lambda: list(c.w.model_registry.list_registered_models(max_results=1000)),
+        default=None,
+    )
+
+    if legacy is None:
+        # Fallback to direct REST call
+        try:
+            data = c.w.api_client.do(
+                "GET", "/api/2.0/mlflow/registered-models/list", query={"max_results": 1000}
+            )
+            legacy_names = [m.get("name") for m in (data.get("registered_models") or [])]
+        except Exception as exc:  # noqa: BLE001
+            c._other_errors.append(f"model_registry.list (legacy fallback): {exc}")
+            legacy_names = []
+    else:
+        legacy_names = [m.name for m in legacy]
+
+    for name in legacy_names:
+        if not name:
+            continue
+        rows = c.safe(
+            f"model_registry.search_model_versions({name})",
+            lambda nm=name: list(
+                c.w.model_registry.search_model_versions(filter=f"name='{nm}'")
+            ),
+            default=None,
+        )
+        if rows is None:
+            # Fallback: REST search
+            try:
+                data = c.w.api_client.do(
+                    "GET",
+                    "/api/2.0/mlflow/model-versions/search",
+                    query={"filter": f"name='{name}'", "max_results": 1000},
+                )
+                rows = data.get("model_versions") or []
+                rows_iter = iter(rows)
+                rows = [_LegacyVersion(r) for r in rows_iter]
+            except Exception as exc:  # noqa: BLE001
+                c._other_errors.append(f"model_versions search (legacy fallback): {exc}")
+                rows = []
+
+        for v in rows:
+            versions.append({
+                "type":         "workspace_registry",
+                "full_name":    None,
+                "model_name":   getattr(v, "name", name),
+                "version":      getattr(v, "version", None),
+                "aliases":      None,
+                "stage":        _val(getattr(v, "current_stage", None)),
+                "status":       _val(getattr(v, "status", None)),
+                "source":       getattr(v, "source", None),
+                "run_id":       getattr(v, "run_id", None),
+                "created_at":   _fmt_ts(getattr(v, "creation_timestamp", None)),
+                "created_by":   getattr(v, "user_id", None),
+                "updated_at":   _fmt_ts(getattr(v, "last_updated_timestamp", None)),
+                "comment":      getattr(v, "description", None),
+            })
+
+    return versions
+
+
+class _LegacyVersion:
+    """Lightweight wrapper so REST-fallback rows match the SDK attribute shape."""
+
+    def __init__(self, raw: dict) -> None:
+        self.name = raw.get("name")
+        self.version = raw.get("version")
+        self.current_stage = raw.get("current_stage")
+        self.status = raw.get("status")
+        self.source = raw.get("source")
+        self.run_id = raw.get("run_id")
+        self.creation_timestamp = raw.get("creation_timestamp")
+        self.last_updated_timestamp = raw.get("last_updated_timestamp")
+        self.user_id = raw.get("user_id")
+        self.description = raw.get("description")
+
+
 # ---------------------------------------------------------------------------
 # Section registry
 # ---------------------------------------------------------------------------
 
 SECTIONS = [
     ("jobs",              "Jobs",                               collect_jobs),
-    ("pipelines",         "DLT Pipelines",                     collect_pipelines),
-    ("notebooks",         "Notebooks",                         collect_notebooks),
-    ("tables",            "Tables (Unity Catalog)",            collect_tables),
-    ("volumes",           "Volumes (Unity Catalog)",           collect_volumes),
-    ("functions",         "Functions (Unity Catalog)",         collect_functions),
-    ("genie_spaces",      "Genie Spaces",                      collect_genie_spaces),
-    ("experiments",       "ML Experiments",                    collect_experiments),
-    ("dashboards",        "Dashboards",                        collect_dashboards),
-    ("serving_endpoints", "Serving Endpoints (agents/models)", collect_serving_endpoints),
-    ("apps",              "Apps",                              collect_apps),
-    ("repos",             "Repos / Git Folders",               collect_repos),
-    ("registered_models", "Registered ML Models",              collect_registered_models),
+    ("pipelines",         "DLT Pipelines",                      collect_pipelines),
+    ("notebooks",         "Notebooks",                          collect_notebooks),
+    ("tables",            "Tables (Unity Catalog)",             collect_tables),
+    ("volumes",           "Volumes (Unity Catalog)",            collect_volumes),
+    ("volume_files",      "Volume Files (UC, recursive)",       collect_volume_files),
+    ("functions",         "Functions (Unity Catalog)",          collect_functions),
+    ("genie_spaces",      "Genie Spaces",                       collect_genie_spaces),
+    ("experiments",       "ML Experiments",                     collect_experiments),
+    ("dashboards",        "Dashboards",                         collect_dashboards),
+    ("serving_endpoints", "Serving Endpoints (agents/models)",  collect_serving_endpoints),
+    ("apps",              "Apps",                               collect_apps),
+    ("repos",             "Repos / Git Folders",                collect_repos),
+    ("registered_models", "Registered ML Models",               collect_registered_models),
+    ("model_versions",    "Model Versions (UC + legacy)",       collect_model_versions),
 ]
 
 SECTION_KEYS = [k for k, _, _ in SECTIONS]
@@ -705,13 +1000,26 @@ def run_workspace(
     output_dir: str,
     save: bool,
     print_json: bool,
+    volume_files_catalog: str = DEFAULT_VOLUME_FILES_CATALOG,
+    list_timeout: float = DEFAULT_LIST_TIMEOUT_SEC,
+    volume_timeout: float = DEFAULT_VOLUME_TIMEOUT_SEC,
 ) -> dict[str, list[dict]]:
     print(f"\n{'━' * 72}", file=sys.stderr)
     print(f"  Workspace : {name}", file=sys.stderr)
     print(f"  Host      : {w.config.host}", file=sys.stderr)
+    print(
+        f"  Volumes   : MANAGED only (EXTERNAL always skipped); "
+        f"volume_files catalog = {volume_files_catalog or '(all)'}",
+        file=sys.stderr,
+    )
     print(f"{'━' * 72}", file=sys.stderr)
 
-    collector = InventoryCollector(w)
+    collector = InventoryCollector(
+        w,
+        volume_files_catalog=volume_files_catalog,
+        list_timeout=list_timeout,
+        volume_timeout=volume_timeout,
+    )
     ws_output_dir = os.path.join(output_dir, name)
 
     inventory: dict[str, list[dict]] = {}
@@ -765,6 +1073,24 @@ def main() -> None:
         "--section", choices=SECTION_KEYS, metavar="SECTION",
         help=f"Collect one section only. Choices: {', '.join(SECTION_KEYS)}",
     )
+    parser.add_argument(
+        "--volume-files-catalog", default=DEFAULT_VOLUME_FILES_CATALOG,
+        help=f"Catalog to walk for the `volume_files` section "
+             f"(default: {DEFAULT_VOLUME_FILES_CATALOG}). Pass '' to walk every "
+             f"catalog the token can see. EXTERNAL volumes are always excluded.",
+    )
+    parser.add_argument(
+        "--list-timeout", type=float, default=DEFAULT_LIST_TIMEOUT_SEC,
+        help=f"Per-directory listing timeout for the volume_files walk "
+             f"(default: {DEFAULT_LIST_TIMEOUT_SEC}s). On timeout, that one "
+             f"directory is skipped and the walk continues.",
+    )
+    parser.add_argument(
+        "--volume-timeout", type=float, default=DEFAULT_VOLUME_TIMEOUT_SEC,
+        help=f"Cumulative time budget per volume "
+             f"(default: {DEFAULT_VOLUME_TIMEOUT_SEC}s). Once spent, the "
+             f"volume is abandoned and the next one starts.",
+    )
     args = parser.parse_args()
 
     selected = [
@@ -799,7 +1125,11 @@ def main() -> None:
 
             try:
                 w = _make_client(host=host, token=token, profile=profile)
-                run_workspace(name, w, selected, args.output_dir, save=True, print_json=False)
+                run_workspace(name, w, selected, args.output_dir,
+                              save=True, print_json=False,
+                              volume_files_catalog=args.volume_files_catalog,
+                              list_timeout=args.list_timeout,
+                              volume_timeout=args.volume_timeout)
             except Exception as exc:
                 print(f"\n  [{name}] Failed to connect: {exc}", file=sys.stderr)
                 skipped.append(name)
@@ -826,6 +1156,9 @@ def main() -> None:
     inventory = run_workspace(
         name, w, selected,
         args.output_dir, save=args.save, print_json=args.json,
+        volume_files_catalog=args.volume_files_catalog,
+        list_timeout=args.list_timeout,
+        volume_timeout=args.volume_timeout,
     )
 
     if args.json:
