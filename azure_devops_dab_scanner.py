@@ -10,12 +10,17 @@ This gives you job and notebook lineage: which bundle deploys which job,
 and which notebooks each job task or DLT pipeline references.
 
 ─── Outputs ─────────────────────────────────────────────────────────────────
-    <repo>_dab_bundles.csv/.json            — one row per bundle
-    <repo>_dab_job_tasks.csv/.json          — one row per job task with notebook/file reference
-    <repo>_dab_pipeline_notebooks.csv/.json — one row per DLT pipeline notebook library
-    <repo>_dab_apps.csv/.json               — one row per Databricks App
-    <repo>_dab_libraries.csv/.json          — one row per library dependency across all job tasks
-    <repo>_dab_workspace_targets.csv/.json  — one row per target/environment per bundle
+    <repo>_dab_bundles.csv/.json                  — one row per bundle
+    <repo>_dab_job_tasks.csv/.json                — one row per job task with notebook/file reference
+    <repo>_dab_pipeline_notebooks.csv/.json       — one row per DLT pipeline notebook library
+    <repo>_dab_apps.csv/.json                     — one row per Databricks App
+    <repo>_dab_libraries.csv/.json                — one row per library dependency across all job tasks
+    <repo>_dab_workspace_targets.csv/.json        — one row per target/environment per bundle
+    <repo>_dab_experiments.csv/.json              — one row per MLflow experiment
+    <repo>_dab_registered_models.csv/.json        — one row per registered model (UC + legacy)
+    <repo>_dab_model_serving_endpoints.csv/.json  — one row per served entity on each endpoint
+    <repo>_dab_schemas.csv/.json                  — one row per UC schema
+    <repo>_dab_volumes.csv/.json                  — one row per UC volume
 
 ─── Single repo ─────────────────────────────────────────────────────────────
     python azure_devops_dab_scanner.py \
@@ -217,14 +222,22 @@ def scan_bundle(
 def extract_bundle_row(bundle: dict) -> dict:
     resources = bundle["resources"]
     return {
-        "repo":            bundle["repo"],
-        "bundle_path":     bundle["bundle_path"],
-        "bundle_name":     bundle["bundle_name"],
-        "environments":    ", ".join(bundle["environments"]),
-        "workspace_hosts": ", ".join(bundle["workspace_hosts"]),
-        "job_count":       len(resources.get("jobs") or {}),
-        "pipeline_count":  len(resources.get("pipelines") or {}),
-        "app_count":       len(resources.get("apps") or {}),
+        "repo":                    bundle["repo"],
+        "bundle_path":             bundle["bundle_path"],
+        "bundle_name":             bundle["bundle_name"],
+        "environments":            ", ".join(bundle["environments"]),
+        "workspace_hosts":         ", ".join(bundle["workspace_hosts"]),
+        "job_count":               len(resources.get("jobs") or {}),
+        "pipeline_count":          len(resources.get("pipelines") or {}),
+        "app_count":               len(resources.get("apps") or {}),
+        "experiment_count":        len(resources.get("experiments") or {}),
+        "registered_model_count": (
+            len(resources.get("registered_models") or {})
+            + len(resources.get("models") or {})
+        ),
+        "serving_endpoint_count":  len(resources.get("model_serving_endpoints") or {}),
+        "schema_count":            len(resources.get("schemas") or {}),
+        "volume_count":            len(resources.get("volumes") or {}),
     }
 
 
@@ -466,6 +479,142 @@ def extract_job_clusters(bundle: dict) -> list[dict]:
     return rows
 
 
+def extract_experiments(bundle: dict) -> list[dict]:
+    rows: list[dict] = []
+    for exp_key, exp in (bundle["resources"].get("experiments") or {}).items():
+        if not isinstance(exp, dict):
+            continue
+        rows.append({
+            "repo":              bundle["repo"],
+            "bundle_path":       bundle["bundle_path"],
+            "bundle_name":       bundle["bundle_name"],
+            "experiment_key":    exp_key,
+            "experiment_name":   exp.get("name", exp_key),
+            "artifact_location": exp.get("artifact_location", ""),
+            "description":       exp.get("description", ""),
+        })
+    return rows
+
+
+def extract_registered_models(bundle: dict) -> list[dict]:
+    """Extract both UC `registered_models` and legacy workspace `models` blocks."""
+    rows: list[dict] = []
+    for model_key, model in (bundle["resources"].get("registered_models") or {}).items():
+        if not isinstance(model, dict):
+            continue
+        rows.append({
+            "repo":         bundle["repo"],
+            "bundle_path":  bundle["bundle_path"],
+            "bundle_name":  bundle["bundle_name"],
+            "model_key":    model_key,
+            "model_name":   model.get("name", model_key),
+            "catalog_name": model.get("catalog_name", ""),
+            "schema_name":  model.get("schema_name", ""),
+            "type":         "unity_catalog",
+            "comment":      model.get("comment", ""),
+        })
+    for model_key, model in (bundle["resources"].get("models") or {}).items():
+        if not isinstance(model, dict):
+            continue
+        rows.append({
+            "repo":         bundle["repo"],
+            "bundle_path":  bundle["bundle_path"],
+            "bundle_name":  bundle["bundle_name"],
+            "model_key":    model_key,
+            "model_name":   model.get("name", model_key),
+            "catalog_name": "",
+            "schema_name":  "",
+            "type":         "workspace_registry",
+            "comment":      model.get("description", ""),
+        })
+    return rows
+
+
+def extract_model_serving_endpoints(bundle: dict) -> list[dict]:
+    """One row per served entity on each endpoint (or one row with empty entity if none defined)."""
+    rows: list[dict] = []
+    for ep_key, endpoint in (bundle["resources"].get("model_serving_endpoints") or {}).items():
+        if not isinstance(endpoint, dict):
+            continue
+        ep_name = endpoint.get("name", ep_key)
+        config = endpoint.get("config") or {}
+        served_entities = config.get("served_entities") or config.get("served_models") or []
+
+        auto_capture = config.get("auto_capture_config") or {}
+        inference_table = ""
+        if auto_capture:
+            parts = [
+                auto_capture.get("catalog_name", ""),
+                auto_capture.get("schema_name", ""),
+                auto_capture.get("table_name_prefix", ""),
+            ]
+            inference_table = ".".join(p for p in parts if p)
+
+        base = {
+            "repo":            bundle["repo"],
+            "bundle_path":     bundle["bundle_path"],
+            "bundle_name":     bundle["bundle_name"],
+            "endpoint_key":    ep_key,
+            "endpoint_name":   ep_name,
+            "inference_table": inference_table,
+        }
+
+        if not served_entities:
+            rows.append({**base,
+                         "served_entity":  "",
+                         "entity_version": "",
+                         "workload_size":  "",
+                         "scale_to_zero":  ""})
+            continue
+
+        for se in served_entities:
+            if not isinstance(se, dict):
+                continue
+            rows.append({**base,
+                         "served_entity":  se.get("entity_name") or se.get("model_name", ""),
+                         "entity_version": str(se.get("entity_version") or se.get("model_version", "")),
+                         "workload_size":  se.get("workload_size", ""),
+                         "scale_to_zero":  str(se.get("scale_to_zero_enabled", ""))})
+    return rows
+
+
+def extract_schemas(bundle: dict) -> list[dict]:
+    rows: list[dict] = []
+    for schema_key, schema in (bundle["resources"].get("schemas") or {}).items():
+        if not isinstance(schema, dict):
+            continue
+        rows.append({
+            "repo":         bundle["repo"],
+            "bundle_path":  bundle["bundle_path"],
+            "bundle_name":  bundle["bundle_name"],
+            "schema_key":   schema_key,
+            "schema_name":  schema.get("name", schema_key),
+            "catalog_name": schema.get("catalog_name", ""),
+            "comment":      schema.get("comment", ""),
+        })
+    return rows
+
+
+def extract_volumes(bundle: dict) -> list[dict]:
+    rows: list[dict] = []
+    for vol_key, vol in (bundle["resources"].get("volumes") or {}).items():
+        if not isinstance(vol, dict):
+            continue
+        rows.append({
+            "repo":             bundle["repo"],
+            "bundle_path":      bundle["bundle_path"],
+            "bundle_name":      bundle["bundle_name"],
+            "volume_key":       vol_key,
+            "volume_name":      vol.get("name", vol_key),
+            "catalog_name":     vol.get("catalog_name", ""),
+            "schema_name":      vol.get("schema_name", ""),
+            "volume_type":      vol.get("volume_type", ""),
+            "storage_location": vol.get("storage_location", ""),
+            "comment":          vol.get("comment", ""),
+        })
+    return rows
+
+
 # ---------------------------------------------------------------------------
 # Output helpers
 # ---------------------------------------------------------------------------
@@ -486,28 +635,24 @@ def _save(key: str, items: list[dict], prefix: str, output_dir: str) -> None:
     print(f"    -> saved {base}.csv", file=sys.stderr)
 
 
-def _print_summary(
-    repo: str,
-    bundle_rows: list[dict],
-    job_rows: list[dict],
-    pipeline_rows: list[dict],
-    app_rows: list[dict],
-    lib_rows: list[dict],
-    target_rows: list[dict],
-    cluster_rows: list[dict],
-) -> None:
+def _print_summary(repo: str, results: dict[str, list[dict]]) -> None:
     print(f"\n{'═' * 72}", file=sys.stderr)
     print(f"  Summary — {repo}", file=sys.stderr)
     print(f"{'═' * 72}", file=sys.stderr)
-    print(f"  Bundles:             {len(bundle_rows)}", file=sys.stderr)
-    print(f"  Job tasks:           {len(job_rows)}", file=sys.stderr)
-    print(f"  Job clusters:        {len(cluster_rows)}", file=sys.stderr)
-    print(f"  Pipeline notebooks:  {len(pipeline_rows)}", file=sys.stderr)
-    print(f"  Apps:                {len(app_rows)}", file=sys.stderr)
-    print(f"  Library deps:        {len(lib_rows)}", file=sys.stderr)
-    print(f"  Workspace targets:   {len(target_rows)}", file=sys.stderr)
+    print(f"  Bundles:                  {len(results['dab_bundles'])}", file=sys.stderr)
+    print(f"  Job tasks:                {len(results['dab_job_tasks'])}", file=sys.stderr)
+    print(f"  Job clusters:             {len(results['dab_job_clusters'])}", file=sys.stderr)
+    print(f"  Pipeline notebooks:       {len(results['dab_pipeline_notebooks'])}", file=sys.stderr)
+    print(f"  Apps:                     {len(results['dab_apps'])}", file=sys.stderr)
+    print(f"  Library deps:             {len(results['dab_libraries'])}", file=sys.stderr)
+    print(f"  Workspace targets:        {len(results['dab_workspace_targets'])}", file=sys.stderr)
+    print(f"  Experiments:              {len(results['dab_experiments'])}", file=sys.stderr)
+    print(f"  Registered models:        {len(results['dab_registered_models'])}", file=sys.stderr)
+    print(f"  Model serving endpoints:  {len(results['dab_model_serving_endpoints'])}", file=sys.stderr)
+    print(f"  Schemas:                  {len(results['dab_schemas'])}", file=sys.stderr)
+    print(f"  Volumes:                  {len(results['dab_volumes'])}", file=sys.stderr)
     print(f"{'─' * 72}", file=sys.stderr)
-    for b in bundle_rows:
+    for b in results["dab_bundles"]:
         envs = b["environments"] or "(no targets defined)"
         hosts = b["workspace_hosts"] or ""
         print(f"  {b['bundle_name']:<45} envs: {envs}", file=sys.stderr)
@@ -540,13 +685,18 @@ def scan_repo(
     bundle_files = sorted(f for f in all_files if f.endswith("databricks.yml"))
     print(f"  Found {len(bundle_files)} databricks.yml file(s)", file=sys.stderr)
 
-    bundle_rows:   list[dict] = []
-    job_rows:      list[dict] = []
-    cluster_rows:  list[dict] = []
-    pipeline_rows: list[dict] = []
-    app_rows:      list[dict] = []
-    lib_rows:      list[dict] = []
-    target_rows:   list[dict] = []
+    bundle_rows:     list[dict] = []
+    job_rows:        list[dict] = []
+    cluster_rows:    list[dict] = []
+    pipeline_rows:   list[dict] = []
+    app_rows:        list[dict] = []
+    lib_rows:        list[dict] = []
+    target_rows:     list[dict] = []
+    experiment_rows: list[dict] = []
+    model_rows:      list[dict] = []
+    endpoint_rows:   list[dict] = []
+    schema_rows:     list[dict] = []
+    volume_rows:     list[dict] = []
 
     for bundle_path in bundle_files:
         print(f"  Scanning {bundle_path}...", file=sys.stderr)
@@ -560,18 +710,28 @@ def scan_repo(
         app_rows.extend(extract_apps(bundle))
         lib_rows.extend(extract_libraries(bundle))
         target_rows.extend(extract_workspace_targets(bundle))
-
-    _print_summary(repo, bundle_rows, job_rows, pipeline_rows, app_rows, lib_rows, target_rows, cluster_rows)
+        experiment_rows.extend(extract_experiments(bundle))
+        model_rows.extend(extract_registered_models(bundle))
+        endpoint_rows.extend(extract_model_serving_endpoints(bundle))
+        schema_rows.extend(extract_schemas(bundle))
+        volume_rows.extend(extract_volumes(bundle))
 
     results: dict[str, list[dict]] = {
-        "dab_bundles":              bundle_rows,
-        "dab_job_tasks":            job_rows,
-        "dab_job_clusters":         cluster_rows,
-        "dab_pipeline_notebooks":   pipeline_rows,
-        "dab_apps":                 app_rows,
-        "dab_libraries":            lib_rows,
-        "dab_workspace_targets":    target_rows,
+        "dab_bundles":                 bundle_rows,
+        "dab_job_tasks":               job_rows,
+        "dab_job_clusters":            cluster_rows,
+        "dab_pipeline_notebooks":      pipeline_rows,
+        "dab_apps":                    app_rows,
+        "dab_libraries":               lib_rows,
+        "dab_workspace_targets":       target_rows,
+        "dab_experiments":             experiment_rows,
+        "dab_registered_models":       model_rows,
+        "dab_model_serving_endpoints": endpoint_rows,
+        "dab_schemas":                 schema_rows,
+        "dab_volumes":                 volume_rows,
     }
+
+    _print_summary(repo, results)
 
     if save:
         repo_dir = os.path.join(output_dir, repo)
